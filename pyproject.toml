@@ -1,19 +1,37 @@
 [project]
-name = "olmo"
+name = "olmo-domain-adaptation"
 version = "0.1.0"
-description = "Example project configured with uv"
+description = "End-to-end pipeline for fine-tuning OLMo 2 1B on any PDF document corpus using SFT + DPO"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
 authors = [
-    { name = "Your Name", email = "you@example.com" },
+    { name = "Felipe Kuhne" },
 ]
 dependencies = [
-    # add runtime dependencies here, e.g. "requests >= 2.30"
+    "openai>=1.40,<2.0",
+    "pydantic>=2.7,<3.0",
+    "sentence-transformers>=3.0,<4.0",
+    "docling>=2.30,<3.0",
+    "torch>=2.3,<3.0",
+]
+
+[project.optional-dependencies]
+training = [
+    "transformers>=4.48,<5.0",
+    "peft>=0.13,<1.0",
+    "trl>=0.12,<1.0",
+    "accelerate>=1.0,<2.0",
+    "datasets>=3.0,<4.0",
+    "bitsandbytes>=0.44,<1.0",
+    "flash-attn>=2.6,<3.0",
+    "mlflow>=2.16,<3.0",
+]
+dev = [
+    "pytest>=8.0,<9.0",
+    "ruff>=0.6,<1.0",
 ]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
-
-# uv-specific configuration is generally optional; the
-# tool reads standard fields above.  You can add
-# a lockfile or specify python versions via `uv`
-# commands rather than in toml.
