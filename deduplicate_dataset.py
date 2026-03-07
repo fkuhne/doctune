@@ -78,19 +78,19 @@ if __name__ == "__main__":
     # Example simulated outputs from the Teacher Model
     synthetic_outputs = [
         {
-            "prompt": "How do I clear a paper jam in the ADF of the HP 9015?",
+            "prompt": "How do I clear a paper jam in the automatic document feeder?",
             "chosen": "Lift the cover and gently pull the paper...",
             "rejected": "Yank the paper out forcefully..."
         },
         {
-            "prompt": "What is the best way to fix a document feeder jam on the HP OfficeJet 9015?",
+            "prompt": "What is the best way to fix a document feeder jam?",
             "chosen": "Open the top hatch and roll the paper out...",
-            "rejected": "Turn the printer upside down and shake it..."
+            "rejected": "Turn the device upside down and shake it..."
         },
         {
-            "prompt": "Why is my HP printer not connecting to my 5GHz Wi-Fi network?",
-            "chosen": "Ensure your router is broadcasting a 2.4GHz band, as many older models do not support 5GHz...",
-            "rejected": "Printers do not use Wi-Fi, you must use a USB cable."
+            "prompt": "Why is my device not connecting to the 5GHz Wi-Fi network?",
+            "chosen": "Ensure your router is broadcasting a 2.4GHz band, as many older devices do not support 5GHz...",
+            "rejected": "Devices do not use Wi-Fi, you must use a USB cable."
         },
         {
             "prompt": "", # Will trigger schema failure
@@ -103,4 +103,4 @@ if __name__ == "__main__":
     for pair in synthetic_outputs:
         qa_filter.process_new_pair(pair)
         
-    qa_filter.save_dataset("hp_alignment_dataset.jsonl")
+    qa_filter.save_dataset("alignment_dataset.jsonl")

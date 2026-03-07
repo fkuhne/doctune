@@ -41,7 +41,7 @@ class DoclingManualExtractor:
             
             # Format as clean Markdown with the injected context header
             enriched_chunk = (
-                f"### [Device Context: {device_context}]\n\n"
+                f"### [Source Context: {device_context}]\n\n"
                 f"{raw_text}\n"
             )
             final_dataset_chunks.append(enriched_chunk)
@@ -56,11 +56,11 @@ if __name__ == "__main__":
     extractor = DoclingManualExtractor()
     
     # Example Target
-    target_pdf = "hp_officejet_pro_9015_manual.pdf"
-    printer_model_name = "HP OfficeJet Pro 9015"
+    target_pdf = "example_manual.pdf"
+    source_name = "Product User Guide"
     
     if os.path.exists(target_pdf):
-        enriched_chunks = extractor.process_manual(target_pdf, printer_model_name)
+        enriched_chunks = extractor.process_manual(target_pdf, source_name)
         
         if enriched_chunks:
             print("\n--- PREVIEW OF DOCLING CHUNK 1 ---")

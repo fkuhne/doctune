@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # RunPod Initialization Script
-# Target: OLMo 2 1B Fine-Tuning for HP Printer QA
+# Target: OLMo 2 1B Domain-Specific Fine-Tuning
 # ==============================================================================
 
 set -e # Exit immediately if a command exits with a non-zero status
@@ -12,8 +12,8 @@ echo "--- Starting RunPod Environment Setup ---"
 # RunPod provides a /workspace directory that persists across pod restarts.
 # NEVER store datasets or model weights outside of this directory.
 cd /workspace
-mkdir -p /workspace/hp-qa-model
-cd /workspace/hp-qa-model
+mkdir -p /workspace/olmo-finetune
+cd /workspace/olmo-finetune
 
 # 2. Update system packages (just in case the base image is stale)
 echo "Updating apt repositories..."
@@ -37,7 +37,7 @@ echo "========================================================================"
 echo "Setup Complete! The environment is ready."
 echo "Hardware Check:"
 nvidia-smi
-echo "Directory /workspace/hp-qa-model is prepped for Phase 2 data generation."
+echo "Directory /workspace/olmo-finetune is prepped for Phase 2 data generation."
 echo "========================================================================"
 
 # Launch MLflow UI in the background

@@ -5,14 +5,17 @@ from openai import OpenAI
 # Initialize OpenAI Client
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+# The domain is configurable — pass any subject area for your PDF corpus.
+DOMAIN = os.environ.get("DOMAIN", "technical documentation")
+
 # Define System Prompt focusing on multi-step reasoning
-SYSTEM_PROMPT = """You are an expert technical support engineer specializing in HP printers. Your objective is to create highly complex, edge-case troubleshooting scenarios for HP printers.
+SYSTEM_PROMPT = f"""You are an expert in {DOMAIN}. Your objective is to create highly complex, edge-case scenarios that test deep domain knowledge and multi-step reasoning.
 You must focus purely on multi-step reasoning questions that require deep diagnostic logic.
 
 Output exactly 10 scenarios.
 Return the output strictly in JSON format using a single key "scenarios", which contains an array of objects.
 Each object MUST have the following keys:
-- "prompt": A detailed user query describing a complex, multi-layered HP printer issue.
+- "prompt": A detailed user query describing a complex, multi-layered issue within the domain.
 - "chosen": The correct, step-by-step diagnostic and resolution process.
 - "rejected": A plausible but incorrect or factually flawed resolution that might mislead a user or cause further issues.
 """
@@ -22,7 +25,7 @@ def generate_scenarios(batch_size=10):
         model="gpt-4o",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Generate exactly {batch_size} complex, edge-case HP printer troubleshooting scenarios focusing on multi-step reasoning. Output valid JSON."}
+            {"role": "user", "content": f"Generate exactly {batch_size} complex, edge-case {DOMAIN} scenarios focusing on multi-step reasoning. Output valid JSON."}
         ],
         response_format={"type": "json_object"},
         temperature=0.7
@@ -38,7 +41,7 @@ def main():
     total_generated = 0
     output_file = "golden_eval.jsonl"
     
-    print(f"Generating {target_count} complex HP printer scenarios...")
+    print(f"Generating {target_count} complex {DOMAIN} scenarios...")
     
     scenarios = []
     # Loop until we reach target_count

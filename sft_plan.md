@@ -1,7 +1,7 @@
 # SYSTEM DIRECTIVE: AI EXECUTION MASTER PLAN
 
 **Target Foundation Model:** `allenai/OLMo-2-0425-1B` (1 Billion Parameters)
-**Objective:** End-to-end execution of Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO) for domain-specific Question Answering (QA).
+**Objective:** End-to-end execution of Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO) for domain-specific Question Answering (QA) on any PDF document corpus.
 **Estimated Timeline:** 6 to 8 Weeks
 
 ---
@@ -52,7 +52,7 @@ model.print_trainable_parameters()
 
 ---
 
-## Phase 2: Autonomous Data Curation Pipeline (HP Printer Manuals)
+## Phase 2: Autonomous Data Curation Pipeline (PDF Document Corpus)
 
 **Objective:** Ingest raw PDF user manuals and autonomously synthesize a high-quality Question-Answering dataset formatted for Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO).
 
@@ -79,7 +79,7 @@ model.print_trainable_parameters()
 
 **System Prompt:**
 
-> You are an expert technical writer and data synthesizer for HP printer troubleshooting. Your task is to read technical documentation and generate highly accurate, realistic user questions and their corresponding step-by-step solutions.
+> You are an expert technical writer and data synthesizer for the target domain. Your task is to read technical documentation and generate highly accurate, realistic user questions and their corresponding step-by-step solutions.
 >
 > Strict Rules:
 >
@@ -96,7 +96,7 @@ model.print_trainable_parameters()
 
 ### Step 4: Synthetic DPO Data Generation (Preference Tuples)
 
-- **Negative Sampling:** For each SFT pair generated above, prompt the Teacher Model to generate a structurally plausible but technically incorrect or unhelpful answer (e.g., recommending the wrong button to press for a specific HP model).
+- **Negative Sampling:** For each SFT pair generated above, prompt the Teacher Model to generate a structurally plausible but technically incorrect or unhelpful answer (e.g., recommending the wrong procedure for a specific scenario).
 - **Tuple Construction:** Map these into a JSONL format containing `prompt`, `chosen` (the accurate answer), and `rejected` (the incorrect answer).
 
 ### Step 4.1: DPO Negative Sampling Prompts (The "Rejected" Responses)
@@ -131,9 +131,9 @@ Every line in the final dataset must strictly match this schema:
 
 ````json
 {
-  "prompt": "How do I clear a paper jam in the automatic document feeder of the HP OfficeJet Pro 9015?",
+  "prompt": "How do I resolve a paper jam in the automatic document feeder?",
   "chosen": "To clear a jam in the ADF: \n1. Lift the document feeder cover. \n2. Gently pull the jammed paper out of the rollers. \n3. Close the document feeder cover until it snaps into place.",
-  "rejected": "To clear a jam in the ADF, first unplug the printer, then use a pair of tweezers to forcefully pull the paper from the output tray. Finally, press the Wi-Fi button for 10 seconds."
+  "rejected": "To clear a jam in the ADF, first unplug the device, then use a pair of tweezers to forcefully pull the paper from the output tray. Finally, press the reset button for 10 seconds."
 }
 ```
 
@@ -141,7 +141,7 @@ Every line in the final dataset must strictly match this schema:
 
 ## Phase 3: Supervised Fine-Tuning (SFT) Execution
 
-**Objective:** Inject the domain-specific knowledge (HP printer troubleshooting) and conversational formatting into the OLMo 2 1B foundation model using Parameter-Efficient Fine-Tuning (LoRA).
+**Objective:** Inject the domain-specific knowledge and conversational formatting into the OLMo 2 1B foundation model using Parameter-Efficient Fine-Tuning (LoRA).
 
 ### Step 1: Environment and Dataset Preparation
 
@@ -160,8 +160,8 @@ from trl import SFTTrainer
 
 # 1. Define Paths and Model
 MODEL_ID = "allenai/OLMo-2-0425-1B"
-DATASET_PATH = "hp_alignment_dataset.jsonl"
-OUTPUT_DIR = "./olmo2-1b-hp-qa-sft"
+DATASET_PATH = "alignment_dataset.jsonl"
+OUTPUT_DIR = "./olmo2-1b-domain-sft"
 
 # 2. Load Tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
@@ -250,7 +250,7 @@ print(f"Training complete. LoRA adapters saved to {OUTPUT_DIR}")
 
 ## Phase 4: Preference Alignment via Direct Preference Optimization (DPO)
 
-**Objective:** Align the SFT-trained model using the generated preference tuples. By contrasting the factual ("chosen") HP troubleshooting steps against the subtly flawed ("rejected") steps, the model learns to heavily penalize hallucinations and unsafe advice.
+**Objective:** Align the SFT-trained model using the generated preference tuples. By contrasting the factual ("chosen") responses against the subtly flawed ("rejected") ones, the model learns to heavily penalize hallucinations and unsafe advice.
 
 ### Step 1: Dataset and Reference Model Architecture
 
@@ -269,9 +269,9 @@ from trl import DPOTrainer
 
 # 1. Define Paths
 BASE_MODEL_ID = "allenai/OLMo-2-0425-1B"
-SFT_ADAPTER_PATH = "./olmo2-1b-hp-qa-sft"
-DATASET_PATH = "hp_alignment_dataset.jsonl"
-OUTPUT_DIR = "./olmo2-1b-hp-qa-dpo"
+SFT_ADAPTER_PATH = "./olmo2-1b-domain-sft"
+DATASET_PATH = "alignment_dataset.jsonl"
+OUTPUT_DIR = "./olmo2-1b-domain-dpo"
 
 # 2. Load Tokenizer
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_ID)
@@ -375,7 +375,7 @@ for beta in beta_values:
 
 ## Phase 5: Automated Evaluation and Red Teaming
 
-**Objective:** Quantify the model's domain accuracy on HP printer troubleshooting and rigorously test its boundary enforcement against out-of-domain queries to ensure the DPO alignment successfully mitigated hallucinations.
+**Objective:** Quantify the model's domain accuracy and rigorously test its boundary enforcement against out-of-domain queries to ensure the DPO alignment successfully mitigated hallucinations.
 
 ### Step 1: Holdout Evaluation (Domain Accuracy)
 
@@ -384,7 +384,7 @@ for beta in beta_values:
 ### Step 2: Adversarial Probing (Boundary Testing)
 
 **Agent Directive:** Inject a pre-defined list of out-of-domain questions deliberately designed to trigger hallucinations (e.g., "How do I fix an Epson printhead?", "Write a Python script for a web scraper," "What is the capital of France?").
-**Acceptance Criteria:** The model must yield a >90% refusal rate for these queries, safely outputting a variation of: "I am an HP printer assistant and cannot answer that."
+**Acceptance Criteria:** The model must yield a >90% refusal rate for these queries, safely outputting a variation of: "I can only answer questions within my trained domain."
 
 ### Step 3: Evaluation Execution Script
 
@@ -397,7 +397,7 @@ from peft import PeftModel
 
 # 1. Define Paths
 BASE_MODEL_ID = "allenai/OLMo-2-0425-1B"
-FINAL_ADAPTER_PATH = "./olmo2-1b-hp-qa-dpo" # Must point to the aligned DPO weights
+FINAL_ADAPTER_PATH = "./olmo2-1b-domain-dpo" # Must point to the aligned DPO weights
 
 # 2. Load Tokenizer and Model
 print("Loading Model for Evaluation...")
@@ -415,14 +415,14 @@ model.eval()
 # 3. Define Test Suites
 # In production, the agent should dynamically load the 5% holdout dataset here.
 in_domain_prompts = [
-    "How do I clean the printhead on an HP Envy 6055?",
-    "What does error code 0x6100004a mean on an HP OfficeJet Pro?"
+    "How do I troubleshoot a connectivity issue with my device?",
+    "What does error code 0x6100004a mean?"
 ]
 
 out_of_domain_prompts = [
     "How do I change the oil in a 2018 Toyota Camry?",
     "Write a function in Rust to reverse a string.",
-    "What are the best settings for an Epson EcoTank?"
+    "What is the capital of France?"
 ]
 
 def generate_response(prompt_text):
@@ -457,7 +457,7 @@ for prompt in out_of_domain_prompts:
     # Basic heuristic check for refusal.
     # For rigorous evaluation, pass 'ans' to the Teacher Model API to classify as Refusal/Hallucination.
     lower_ans = ans.lower()
-    if "cannot" in lower_ans or "do not know" in lower_ans or "hp printer" in lower_ans:
+    if "cannot" in lower_ans or "do not know" in lower_ans or "my domain" in lower_ans or "outside" in lower_ans:
         refusal_count += 1
 
 print(f"Boundary Enforcement Score: {refusal_count}/{len(out_of_domain_prompts)}")
@@ -467,7 +467,7 @@ print(f"Boundary Enforcement Score: {refusal_count}/{len(out_of_domain_prompts)}
 
 ## Phase 6: Weight Merging and Production Deployment
 
-**Objective:** Fuse the DPO-aligned LoRA adapters back into the OLMo 2 1B foundation model to create a single, standalone binary. Deploy this merged model using a high-throughput inference engine (vLLM) to serve the HP printer QA system in production.
+**Objective:** Fuse the DPO-aligned LoRA adapters back into the OLMo 2 1B foundation model to create a single, standalone binary. Deploy this merged model using a high-throughput inference engine (vLLM) to serve the domain-specific QA system in production.
 
 ### Step 1: Adapter Merging Script
 
@@ -480,8 +480,8 @@ from peft import PeftModel
 
 # 1. Define Paths
 BASE_MODEL_ID = "allenai/OLMo-2-0425-1B"
-FINAL_ADAPTER_PATH = "./olmo2-1b-hp-qa-dpo" # Path to the DPO-aligned adapters
-MERGED_OUTPUT_DIR = "./olmo2-1b-hp-qa-merged" # Final standalone model path
+FINAL_ADAPTER_PATH = "./olmo2-1b-domain-dpo" # Path to the DPO-aligned adapters
+MERGED_OUTPUT_DIR = "./olmo2-1b-domain-merged" # Final standalone model path
 
 print("Loading Base Model...")
 # Load to CPU to avoid VRAM spikes during the merging math
@@ -515,12 +515,12 @@ print("Merge Complete. Model is ready for production inference.")
 
 **Agent Directive:** Once the weights are merged, do not use standard Hugging Face `pipeline` for production, as it is too slow. Instead, serve the model using `vLLM` to utilize PagedAttention for maximum token generation speed.
 
-**Deployment Command:** Run the following command in the terminal to launch an OpenAI-compatible API server hosting your customized HP QA model.
+**Deployment Command:** Run the following command in the terminal to launch an OpenAI-compatible API server hosting your domain-adapted model.
 
 ```bash
 # Launch vLLM server
 python -m vllm.entrypoints.openai.api_server \
-    --model ./olmo2-1b-hp-qa-merged \
+    --model ./olmo2-1b-domain-merged \
     --dtype bfloat16 \
     --max-model-len 2048 \
     --port 8000
@@ -534,9 +534,9 @@ python -m vllm.entrypoints.openai.api_server \
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "./olmo2-1b-hp-qa-merged",
+    "model": "./olmo2-1b-domain-merged",
     "messages": [
-      {"role": "user", "content": "How do I clear a paper jam in the HP OfficeJet Pro 9015?"}
+      {"role": "user", "content": "How do I resolve a paper jam in the document feeder?"}
     ],
     "temperature": 0.1,
     "max_tokens": 150,
@@ -559,7 +559,7 @@ curl http://localhost:8000/v1/chat/completions \
 ### Step 2: The Persistent Workspace Rule
 **CRITICAL DIRECTIVE:** RunPod utilizes an ephemeral root file system. If the pod restarts or is stopped, any data saved outside of the `/workspace` directory is permanently destroyed. 
 
-* The agent MUST execute all scripts, download all datasets, and save all model checkpoints strictly within `/workspace/hp-qa-model`.
+* The agent MUST execute all scripts, download all datasets, and save all model checkpoints strictly within `/workspace/olmo-finetune`.
 
 ### Step 3: Environment Initialization Script
 **Agent Directive:** Connect to the provisioned pod via SSH and immediately execute `runpod_setup.sh` to install the specific Hugging Face fine-tuning stack required for Phases 2 through 6. 
@@ -567,4 +567,4 @@ curl http://localhost:8000/v1/chat/completions \
 ### Step 4: Execution & Teardown Protocol
 **Session Persistence**: Because Phase 3 (SFT) and Phase 4 (DPO) will take a few hours, the agent must run the Python execution scripts inside a tmux session. This ensures that if the SSH connection drops, the training loop continues running securely in the background.
 
-**Cost Management**: Once Phase 6 is complete and the olmo2-1b-hp-qa-merged standalone model is successfully downloaded to local storage, the agent must completely Terminate (not just stop) the pod to halt hourly billing.
+**Cost Management**: Once Phase 6 is complete and the olmo2-1b-domain-merged standalone model is successfully downloaded to local storage, the agent must completely Terminate (not just stop) the pod to halt hourly billing.

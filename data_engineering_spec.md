@@ -1,6 +1,6 @@
 # Data Engineering Pipeline Specification: PDF to SFT/DPO Dataset
 
-**Objective:** Define the programmatic framework for extracting, enriching, and synthesizing raw HP Printer PDF manuals into a high-fidelity dataset optimized for 1B parameter language model alignment.
+**Objective:** Define the programmatic framework for extracting, enriching, and synthesizing raw PDF documents into a high-fidelity dataset optimized for 1B parameter language model alignment.
 
 ---
 
@@ -21,7 +21,7 @@ To prevent the "Amnesia Problem" where the fine-tuned model provides generic or 
 * **Semantic Boundaries:** Text must be chunked based on Markdown headers (e.g., H2 or H3) rather than arbitrary character counts, keeping troubleshooting steps organically grouped.
 * **Token Limits:** Restrict chunks to a maximum of 1,000 tokens to prevent the Teacher Model's attention mechanism from degrading during synthesis.
 * **The Metadata Header:** Before a chunk is sent to the Teacher Model, the script MUST prepend a standardized context header. 
-* **Header Example:** `[Device Context: HP OfficeJet Pro 9015] [Section: Network Troubleshooting]`
+* **Header Example:** `[Source Context: Product User Guide] [Section: Troubleshooting]`
 
 ---
 
@@ -31,10 +31,10 @@ The pipeline must prioritize the "Less is More for Alignment" (LIMA) principle. 
 
 * **Synthesis Quota:** Instruct the Teacher Model to generate exactly 3 QA pairs per valid chunk.
 * **The Multi-Angle Prompting Rule:** The Teacher Model must frame the 3 questions from distinct user perspectives:
-    * **Symptom-Based:** "My printer has a blinking orange light and won't connect to my Mac."
+    * **Symptom-Based:** "My device has a blinking orange light and won't connect to my network."
     * **Direct Action:** "How do I factory reset the network settings on this model?"
-    * **Clarification/Edge-Case:** "Does the wireless button need to be held down, or just pressed once?"
-* **Response Formatting:** Enforce that the "chosen" response always mentions the specific printer model name within its answer to reinforce the model's contextual grounding.
+    * **Clarification/Edge-Case:** "Does the reset button need to be held down, or just pressed once?"
+* **Response Formatting:** Enforce that the "chosen" response always mentions the specific source document context within its answer to reinforce the model's contextual grounding.
 
 ---
 
@@ -44,9 +44,9 @@ Direct Preference Optimization requires the model to learn the boundary between 
 
 * **Plausibility Constraint:** The rejected answer must mirror the tone, formatting, and confidence of the chosen answer. 
 * **The Flaw Injection Matrix:** Instruct the Teacher Model to inject one of the following specific flaw types into the rejected response:
-    * **Wrong Sequence:** Instructing the user to execute step 4 before step 1 (e.g., pulling jammed paper before lifting the release latch).
-    * **Wrong Component:** Diagnosing an ink smear as a Wi-Fi issue, or telling the user to clean the scanner glass to fix a clogged printhead.
-    * **Subtle Hallucination:** Inventing a nonexistent menu path (e.g., "Navigate to Settings -> Advanced -> Clear Jam").
+    * **Wrong Sequence:** Instructing the user to execute step 4 before step 1 (e.g., performing an action before the prerequisite step).
+    * **Wrong Component:** Diagnosing one symptom as an unrelated issue (e.g., confusing a hardware problem for a software configuration issue).
+    * **Subtle Hallucination:** Inventing a nonexistent menu path (e.g., "Navigate to Settings -> Advanced -> Clear Cache").
 
 ---
 

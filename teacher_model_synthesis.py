@@ -21,29 +21,33 @@ class DPOResponse(BaseModel):
 # Synthetic Data Generator Class
 # ==============================================================================
 class TeacherModelSynthesizer:
-    def __init__(self, api_key=None, model="gpt-4o"):
+    def __init__(self, domain: str = "technical documentation", api_key: str | None = None, model: str = "gpt-4o"):
         """
-        Initializes the OpenAI client. 
-        GPT-4o is recommended for its high instruction-following adherence and speed.
+        Initializes the OpenAI client for synthetic data generation.
+
+        Args:
+            domain: The subject-matter domain for prompt context (e.g., "medical devices", "automotive repair").
+            api_key: OpenAI API key. Falls back to OPENAI_API_KEY env var.
+            model: The teacher model identifier.
         """
-        print(f"Initializing Teacher Model Synthesizer ({model})...")
-        # Agent Directive: Ensure OPENAI_API_KEY is set in the environment variables
+        print(f"Initializing Teacher Model Synthesizer ({model}) for domain: '{domain}'...")
         self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
         self.model = model
+        self.domain = domain
 
     def generate_sft_pairs(self, markdown_chunk: str) -> List[dict]:
         """
         Takes a Docling markdown chunk and generates 2 to 3 diverse SFT QA pairs.
         """
         system_prompt = (
-            "You are an expert technical writer and data synthesizer for HP printer troubleshooting. "
-            "Your task is to read technical documentation and generate highly accurate, realistic user questions "
+            f"You are an expert technical writer and data synthesizer for {self.domain}. "
+            "Your task is to read documentation and generate highly accurate, realistic user questions "
             "and their corresponding step-by-step solutions.\n\n"
             "Strict Rules:\n"
             "1. Do NOT hallucinate or use external knowledge. The answer must be derived strictly from the text.\n"
-            "2. If the text lacks actionable troubleshooting or 'how-to' info, output an empty array.\n"
-            "3. Generate questions from multiple angles (e.g., direct action, symptom-based).\n"
-            "4. Always mention the specific printer model in the chosen response."
+            "2. If the text lacks actionable or 'how-to' information, output an empty array.\n"
+            "3. Generate questions from multiple angles (e.g., direct action, symptom-based, clarification).\n"
+            "4. Always reference the specific source context in the chosen response."
         )
 
         user_prompt = f"Text Chunk:\n\"\"\"{markdown_chunk}\"\"\"\n\nGenerate 2 to 3 Question-Answer pairs."
@@ -125,12 +129,11 @@ class TeacherModelSynthesizer:
 # Execution Example for the AI Agent
 # ==============================================================================
 if __name__ == "__main__":
-    # Ensure the agent has the API key exported in the environment
-    synthesizer = TeacherModelSynthesizer()
+    synthesizer = TeacherModelSynthesizer(domain="technical documentation")
     
-    # Example chunk coming from the Docling script
+    # Example chunk
     example_markdown_chunk = (
-        "### [Device Context: HP OfficeJet Pro 9015]\n\n"
+        "### [Source Context: Product User Guide]\n\n"
         "**Clearing a Paper Jam in the ADF**\n"
         "1. Lift the document feeder cover.\n"
         "2. Gently pull the jammed paper out of the rollers.\n"

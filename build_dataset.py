@@ -9,7 +9,7 @@ from teacher_model_synthesis import TeacherModelSynthesizer
 from deduplicate_dataset import DatasetFilter
 
 class DatasetBuilder:
-    def __init__(self, input_dir="./manuals", output_file="hp_alignment_dataset.jsonl"):
+    def __init__(self, input_dir="./manuals", output_file="alignment_dataset.jsonl"):
         """
         Initializes the master orchestrator.
         """
@@ -23,8 +23,8 @@ class DatasetBuilder:
 
     def extract_device_context(self, filename: str) -> str:
         """
-        A helper function to convert a filename like 'hp_officejet_pro_9015_manual.pdf'
-        into a clean context string: 'HP Officejet Pro 9015'.
+        A helper function to convert a filename like 'product_user_guide.pdf'
+        into a clean context string: 'Product User Guide'.
         """
         base_name = os.path.basename(filename).replace(".pdf", "")
         clean_name = base_name.replace("_", " ").replace("-", " ").title()
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     
     builder = DatasetBuilder(
         input_dir="./manuals",
-        output_file="hp_alignment_dataset.jsonl"
+        output_file="alignment_dataset.jsonl"
     )
     
     # Run the pipeline
