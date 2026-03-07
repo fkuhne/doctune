@@ -25,7 +25,7 @@ python3 -m pip install --upgrade pip
 
 # 4. Install the Hugging Face Fine-Tuning Stack
 echo "Installing transformers, peft, trl, and dependencies..."
-pip install "transformers>=4.48" peft trl accelerate datasets bitsandbytes unstructured marker-pdf
+pip install "transformers>=4.48" peft trl accelerate datasets bitsandbytes unstructured marker-pdf mlflow
 
 # 5. Install Flash Attention 2
 # We use --no-build-isolation to force pip to use the pre-installed PyTorch/CUDA 
@@ -39,3 +39,6 @@ echo "Hardware Check:"
 nvidia-smi
 echo "Directory /workspace/hp-qa-model is prepped for Phase 2 data generation."
 echo "========================================================================"
+
+# Launch MLflow UI in the background
+mlflow ui --host 0.0.0.0 --port 5000 &

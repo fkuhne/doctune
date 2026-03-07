@@ -182,6 +182,7 @@ peft_config = LoraConfig(
     r=16,
     lora_alpha=32,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    modules_to_save=["lm_head", "embed_tokens"], # Allows the model to map new, domain-specific vocabulary
     lora_dropout=0.05,
     bias="none",
     task_type=TaskType.CAUSAL_LM
@@ -189,18 +190,25 @@ peft_config = LoraConfig(
 
 # 5. Load and Format Dataset
 dataset = load_dataset("json", data_files=DATASET_PATH, split="train")
+eval_dataset = load_dataset("json", data_files="golden_eval.jsonl", split="train")
 
 def formatting_prompts_func(example):
-    """Converts the JSON structure into a continuous conversational string."""
+    """Converts the JSON structure into conversational strings using the model's chat template."""
     output_texts = []
     for i in range(len(example['prompt'])):
-        text = f"<|user|>\n{example['prompt'][i]}\n<|assistant|>\n{example['chosen'][i]}{tokenizer.eos_token}"
+        messages = [
+            {"role": "user", "content": example['prompt'][i]},
+            {"role": "assistant", "content": example['chosen'][i]}
+        ]
+        text = tokenizer.apply_chat_template(messages, tokenize=False)
         output_texts.append(text)
     return output_texts
 
 # 6. Hyperparameter Configuration
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
+    run_name="olmo2-hp-sft-v1",
+    report_to="mlflow",
     num_train_epochs=3,                     # 2 to 4 epochs is standard for SFT
     per_device_train_batch_size=4,          # Adjust based on VRAM (4 is safe for 24GB)
     gradient_accumulation_steps=8,          # Effective batch size = 32
@@ -221,7 +229,7 @@ training_args = TrainingArguments(
 trainer = SFTTrainer(
     model=model,
     train_dataset=dataset,
-    eval_dataset=dataset.train_test_split(test_size=0.05)['test'], # 5% holdout for validation
+    eval_dataset=eval_dataset,              # Pulled from golden_eval.jsonl
     peft_config=peft_config,
     formatting_func=formatting_prompts_func,
     max_seq_length=2048,                    # Truncate sequences longer than 2048 tokens
@@ -285,60 +293,82 @@ model = PeftModel.from_pretrained(base_model, SFT_ADAPTER_PATH, is_trainable=Tru
 
 # 4. Load and Format Dataset
 dataset = load_dataset("json", data_files=DATASET_PATH, split="train")
+eval_dataset = load_dataset("json", data_files="golden_eval.jsonl", split="train")
 
 def format_dpo_dataset(example):
     """
     DPOTrainer expects strings for prompt, chosen, and rejected.
-    We apply the exact conversational tags used during SFT.
+    We use the model's chat template to ensure formatting resilience.
     """
+    prompt_messages = [
+        {"role": "user", "content": example["prompt"]}
+    ]
+    formatted_prompt = tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
+    
     return {
-        "prompt": f"<|user|>\n{example['prompt']}\n<|assistant|>\n",
+        "prompt": formatted_prompt,
         "chosen": f"{example['chosen']}{tokenizer.eos_token}",
         "rejected": f"{example['rejected']}{tokenizer.eos_token}",
     }
 
 dpo_dataset = dataset.map(format_dpo_dataset)
+dpo_eval_dataset = eval_dataset.map(format_dpo_dataset)
 
-# 5. Hyperparameter Configuration
-# DPO requires significantly lower learning rates than SFT to prevent catastrophic forgetting.
-training_args = TrainingArguments(
-    output_dir=OUTPUT_DIR,
-    num_train_epochs=1,                     # DPO typically requires only 1 epoch
-    per_device_train_batch_size=2,          # Keep low to manage memory with DPO's double forward pass
-    gradient_accumulation_steps=16,         # Effective batch size = 32
-    gradient_checkpointing=True,
-    optim="adamw_torch",
-    learning_rate=5e-6,                     # Ultra-low LR for DPO
-    lr_scheduler_type="cosine",
-    warmup_ratio=0.1,
-    logging_steps=10,
-    save_strategy="epoch",
-    evaluation_strategy="epoch",
-    bf16=True,
-    max_grad_norm=0.3,
-    remove_unused_columns=False,            # Required for DPOTrainer
-)
+# 5. DPO Training Function
+def train_dpo(beta_val, lr_val):
+    run_name = f"olmo2-dpo-beta{beta_val}-lr{lr_val}"
+    output_dir = f"./{run_name}"
+    print(f"\n--- Starting DPO Sweep: Beta={beta_val}, LR={lr_val} ---")
+    
+    # 5.1 Hyperparameter Configuration
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        run_name=run_name,
+        report_to="mlflow",
+        num_train_epochs=1,                     # DPO typically requires only 1 epoch
+        per_device_train_batch_size=2,          # Keep low to manage memory with DPO's double forward pass
+        gradient_accumulation_steps=16,         # Effective batch size = 32
+        gradient_checkpointing=True,
+        optim="adamw_torch",
+        learning_rate=lr_val,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.1,
+        logging_steps=10,
+        save_strategy="epoch",
+        evaluation_strategy="epoch",
+        bf16=True,
+        max_grad_norm=0.3,
+        remove_unused_columns=False,            # Required for DPOTrainer
+    )
 
-# 6. Initialize DPOTrainer
-trainer = DPOTrainer(
-    model=model,
-    ref_model=None,                         # Implicitly handled by TRL using PEFT adapters
-    args=training_args,
-    train_dataset=dpo_dataset,
-    eval_dataset=dpo_dataset.train_test_split(test_size=0.05)['test'],
-    tokenizer=tokenizer,
-    beta=0.1,                               # KL penalty. 0.1 is standard. Increase if model outputs degrade.
-    max_length=2048,                        # Max total sequence length
-    max_prompt_length=1024,                 # Max length of the prompt portion
-)
+    # 5.2 Initialize DPOTrainer
+    trainer = DPOTrainer(
+        model=model,
+        ref_model=None,                         # Implicitly handled by TRL using PEFT adapters
+        args=training_args,
+        train_dataset=dpo_dataset,
+        eval_dataset=dpo_eval_dataset,          # Pulled from golden_eval.jsonl
+        tokenizer=tokenizer,
+        beta=beta_val,
+        max_length=2048,
+        max_prompt_length=1024,
+    )
 
-# 7. Execute DPO Training
-print("Initiating Direct Preference Optimization (DPO)...")
-trainer.train()
+    # 5.3 Execute Training
+    print(f"Initiating DPO Training for {run_name}...")
+    trainer.train()
 
-# 8. Save Final Aligned Adapters
-trainer.save_model(OUTPUT_DIR)
-print(f"Alignment complete. Final LoRA adapters saved to {OUTPUT_DIR}")
+    # 5.4 Save Aligned Adapters
+    trainer.save_model(output_dir)
+    print(f"Alignment complete for {run_name}. Saved to {output_dir}")
+
+# 6. Execute DPO Hyperparameter Sweep
+beta_values = [0.1, 0.25]
+lr_values = [5e-6, 1e-6]
+
+for beta in beta_values:
+    for lr in lr_values:
+        train_dpo(beta, lr)
 ```
 
 ---
