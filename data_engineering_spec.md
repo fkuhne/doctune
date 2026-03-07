@@ -57,4 +57,4 @@ An automated script processing 50 manuals will inevitably generate overlapping q
 * **Embedding Extraction:** Pass all generated "prompts" through a lightweight embedding model (such as `all-MiniLM-L6-v2` via Hugging Face `sentence-transformers`).
 * **Cosine Similarity Threshold:** Calculate the similarity score between new prompts and the existing dataset.
 * **Pruning Logic:** If a new prompt has a cosine similarity $> 0.85$ with any existing prompt, the script must discard the new QA pair. This forces the dataset to remain strictly diverse and prevents the 1B model from overfitting on common queries.
-* **Final Validation:** Assert that all retained JSON objects contain non-null `prompt`, `chosen`, and `rejected` keys before appending to the final `hp_alignment_dataset.jsonl` file.
+* **Final Validation:** Assert that all retained JSON objects contain non-null `prompt`, `chosen`, and `rejected` keys before appending to the final `alignment_dataset.jsonl` file.

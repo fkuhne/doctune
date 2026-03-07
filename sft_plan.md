@@ -130,7 +130,7 @@ model.print_trainable_parameters()
 **Data Structure Requirement:**
 Every line in the final dataset must strictly match this schema:
 
-````json
+```json
 {
   "prompt": "How do I resolve a paper jam in the automatic document feeder?",
   "chosen": "To clear a jam in the ADF: \n1. Lift the document feeder cover. \n2. Gently pull the jammed paper out of the rollers. \n3. Close the document feeder cover until it snaps into place.",
@@ -209,7 +209,7 @@ def formatting_prompts_func(example):
 # 6. Hyperparameter Configuration
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
-    run_name="olmo2-hp-sft-v1",
+    run_name="olmo2-domain-sft-v1",
     report_to="mlflow",
     num_train_epochs=3,                     # 2 to 4 epochs is standard for SFT
     per_device_train_batch_size=4,          # Adjust based on VRAM (4 is safe for 24GB)
@@ -246,7 +246,7 @@ trainer.train()
 # 9. Save the Fine-Tuned Adapters
 trainer.save_model(OUTPUT_DIR)
 print(f"Training complete. LoRA adapters saved to {OUTPUT_DIR}")
-````
+```
 
 ---
 

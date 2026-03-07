@@ -69,7 +69,7 @@ class TeacherModelSynthesizer:
             print(f"SFT Generation Error: {e}")
             return []
 
-    def generate_dpo_rejection(self, prompt: str, chosen: str) -> str:
+    def generate_dpo_rejection(self, prompt: str, chosen: str) -> str | None:
         """
         Takes a generated SFT pair and generates a subtly flawed 'rejected' answer for DPO alignment.
         """
