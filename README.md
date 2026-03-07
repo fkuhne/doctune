@@ -82,6 +82,8 @@ python merge_model.py
 ```
 olmo/
 ├── README.md                       # This file
+├── MODEL_CARD.md                   # Model card (intended use, method, limitations)
+├── DATA_CARD.md                    # Dataset card (schema, source guidance, quality)
 ├── sft_plan.md                     # Master Execution Blueprint (Phases 1–6)
 ├── data_engineering_spec.md        # Data pipeline theoretical framework
 ├── build_dataset.py                # Phase 2 orchestrator — runs the full data pipeline
@@ -91,8 +93,9 @@ olmo/
 ├── generate_golden_eval.py         # Golden evaluation set generator
 ├── train_sft.py                    # Phase 3 — Supervised Fine-Tuning
 ├── train_dpo.py                    # Phase 4 — DPO Preference Alignment
-├── evaluate.py                     # Phase 5 — Automated Evaluation & Red Teaming
+├── evaluate.py                     # Phase 5 — Evaluation & Red Teaming (--baseline)
 ├── merge_model.py                  # Phase 6 — Weight Merging for Deployment
+├── Makefile                        # Dev targets (make data, make train-sft, etc.)
 ├── runpod_setup.sh                 # RunPod GPU environment setup
 ├── olmo.ipynb                      # Exploratory notebook
 ├── examples/
