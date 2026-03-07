@@ -3,7 +3,7 @@ from docling.document_converter import DocumentConverter
 from docling.chunking import HierarchicalChunker
 
 class DoclingManualExtractor:
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initializes the Docling converter and its native hierarchical chunker.
         Docling uses advanced ML models (DocLayNet) under the hood to understand 
@@ -13,7 +13,7 @@ class DoclingManualExtractor:
         self.converter = DocumentConverter()
         self.chunker = HierarchicalChunker()
 
-    def process_manual(self, pdf_path, device_context):
+    def process_manual(self, pdf_path: str, device_context: str) -> list[str]:
         """
         Parses a PDF manual, perfectly preserves tables/columns as Markdown,
         chunks the document based on its internal heading structure, and injects metadata.

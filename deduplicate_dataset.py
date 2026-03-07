@@ -3,7 +3,7 @@ import torch
 from sentence_transformers import SentenceTransformer, util
 
 class DatasetFilter:
-    def __init__(self, similarity_threshold=0.85):
+    def __init__(self, similarity_threshold: float = 0.85) -> None:
         """
         Initializes the embedding model and the vector store.
         Using all-MiniLM-L6-v2 as it is extremely fast and perfect for sentence-level semantic matching.
@@ -15,7 +15,7 @@ class DatasetFilter:
         self.accepted_data = []
         self.accepted_embeddings = None
 
-    def validate_schema(self, qa_pair):
+    def validate_schema(self, qa_pair: dict) -> bool:
         """Ensures the generated tuple contains exactly what the SFT/DPO trainers expect."""
         required_keys = ["prompt", "chosen", "rejected"]
         
@@ -29,7 +29,7 @@ class DatasetFilter:
             
         return True
 
-    def process_new_pair(self, qa_pair):
+    def process_new_pair(self, qa_pair: dict) -> bool:
         """
         Validates the schema, calculates semantic similarity against all accepted prompts,
         and decides whether to keep or discard the new pair.
@@ -60,7 +60,7 @@ class DatasetFilter:
             self.accepted_data.append(qa_pair)
             return True
 
-    def save_dataset(self, output_path):
+    def save_dataset(self, output_path: str) -> None:
         """Saves the strictly filtered dataset to a JSONL file for training."""
         print(f"\nSaving {len(self.accepted_data)} highly diverse QA pairs to {output_path}...")
         with open(output_path, 'w', encoding='utf-8') as f:

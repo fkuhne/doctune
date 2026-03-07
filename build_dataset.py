@@ -9,7 +9,7 @@ from teacher_model_synthesis import TeacherModelSynthesizer
 from deduplicate_dataset import DatasetFilter
 
 class DatasetBuilder:
-    def __init__(self, input_dir="./manuals", output_file="alignment_dataset.jsonl"):
+    def __init__(self, input_dir: str = "./manuals", output_file: str = "alignment_dataset.jsonl") -> None:
         """
         Initializes the master orchestrator.
         """
@@ -32,7 +32,7 @@ class DatasetBuilder:
         clean_name = clean_name.replace(" Manual", "").replace(" User Guide", "")
         return clean_name
 
-    def build(self):
+    def build(self) -> None:
         """
         The main execution loop. Finds all PDFs, extracts chunks, synthesizes data, 
         filters out duplicates, and saves the final dataset.
