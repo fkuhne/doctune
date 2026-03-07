@@ -21,17 +21,15 @@ Each object MUST have the following keys:
 """
 
 def generate_scenarios(batch_size=10):
-    response = client.chat.completions.create(
+    response = client.responses.create(
         model="gpt-4o",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Generate exactly {batch_size} complex, edge-case {DOMAIN} scenarios focusing on multi-step reasoning. Output valid JSON."}
-        ],
-        response_format={"type": "json_object"},
+        instructions=SYSTEM_PROMPT,
+        input=f"Generate exactly {batch_size} complex, edge-case {DOMAIN} scenarios focusing on multi-step reasoning. Output valid JSON.",
+        text={"format": {"type": "json_object"}},
         temperature=0.7
     )
     
-    content = response.choices[0].message.content
+    content = response.output_text
     data = json.loads(content)
     return data.get("scenarios", [])
 

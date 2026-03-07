@@ -59,17 +59,15 @@ def judge_response(prompt: str, response: str, test_type: str) -> dict | None:
             f"Model Response: {response}"
         )
 
-        result = client.chat.completions.create(
+        result = client.responses.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
+            instructions=JUDGE_SYSTEM_PROMPT,
+            input=user_msg,
             temperature=0.0,
-            max_tokens=200,
+            max_output_tokens=200,
         )
 
-        raw = result.choices[0].message.content.strip()
+        raw = result.output_text.strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()

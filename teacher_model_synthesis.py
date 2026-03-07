@@ -53,17 +53,15 @@ class TeacherModelSynthesizer:
         user_prompt = f"Text Chunk:\n\"\"\"{markdown_chunk}\"\"\"\n\nGenerate 2 to 3 Question-Answer pairs."
 
         try:
-            response = self.client.beta.chat.completions.parse(
+            response = self.client.responses.parse(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format=SFTResponse,
-                temperature=0.3 # Low temperature for factual grounding
+                instructions=system_prompt,
+                input=user_prompt,
+                text_format=SFTResponse,
+                temperature=0.3  # Low temperature for factual grounding
             )
             # Convert Pydantic objects back to a list of dicts
-            return [pair.model_dump() for pair in response.choices[0].message.parsed.qa_pairs]
+            return [pair.model_dump() for pair in response.output_parsed.qa_pairs]
         
         except Exception as e:
             print(f"SFT Generation Error: {e}")
@@ -85,16 +83,14 @@ class TeacherModelSynthesizer:
         user_prompt = f"User Question: \"{prompt}\"\nTrue Answer: \"{chosen}\"\n\nGenerate the plausible but factually incorrect 'rejected' response."
 
         try:
-            response = self.client.beta.chat.completions.parse(
+            response = self.client.responses.parse(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format=DPOResponse,
-                temperature=0.5 # Slightly higher temp to encourage creative flaw generation
+                instructions=system_prompt,
+                input=user_prompt,
+                text_format=DPOResponse,
+                temperature=0.5  # Slightly higher temp to encourage creative flaw generation
             )
-            return response.choices[0].message.parsed.rejected
+            return response.output_parsed.rejected
             
         except Exception as e:
             print(f"DPO Generation Error: {e}")
