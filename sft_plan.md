@@ -57,6 +57,16 @@ model.print_trainable_parameters()
 
 **Objective:** Ingest raw PDF user manuals and autonomously synthesize a high-quality Question-Answering dataset formatted for Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO).
 
+> **💻 Local Execution Supported:** Phase 2 does **not** require a GPU. All operations (PDF parsing via Docling, OpenAI API calls, sentence-transformer deduplication) run on CPU. You can execute this entire phase on your local macOS or Linux workstation before provisioning a GPU pod for Phases 3–6.
+>
+> **Local Setup:**
+> 1. Install base dependencies: `pip install -e .`
+> 2. Export your API key: `export OPENAI_API_KEY="your_key_here"`
+> 3. Place your PDFs in `./manuals/`
+> 4. Run: `python build_dataset.py`
+> 5. (Optional) Generate the golden eval set: `python generate_golden_eval.py`
+> 6. Transfer the generated `.jsonl` files to the GPU pod for Phases 3–6.
+
 ### Step 1: Document Ingestion and Layout Parsing
 
 - **Tooling:** Utilize layout-aware document parsers such as `unstructured.io` or `marker` to extract the text from the PDFs.
@@ -549,10 +559,12 @@ curl http://localhost:8000/v1/chat/completions \
 ```
 
 
-## Infrastructure Addendum: RunPod GPU Provisioning & Setup
+## Infrastructure Addendum: RunPod GPU Provisioning & Setup (Phases 3–6 Only)
+
+> **Note:** This section is only required for GPU-dependent training, alignment, evaluation, and deployment (Phases 3–6). Phase 2 (data curation) can be executed locally — see the Phase 2 section above.
 
 **Platform:** RunPod
-**Objective:** Provision a cost-effective, high-availability GPU environment (e.g., RTX 3090, RTX 4090, or A100) and initialize the dependencies required for the OLMo 2 1B fine-tuning pipeline.
+**Objective:** Provision a cost-effective, high-availability GPU environment (e.g., RTX 3090, RTX 4090, or A100) and initialize the dependencies required for the OLMo 2 1B fine-tuning pipeline (Phases 3–6).
 
 ### Step 1: Pod Provisioning Criteria
 **Agent/User Directive:** When deploying the infrastructure on RunPod, strictly adhere to the following configuration:

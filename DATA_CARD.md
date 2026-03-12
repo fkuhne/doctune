@@ -81,7 +81,12 @@ Every row in the dataset strictly follows this structure:
 
 ## Recommended Usage
 
-1. Place your PDF documents in `./manuals/`
-2. Set `OPENAI_API_KEY` environment variable
-3. Run `python build_dataset.py`
-4. Inspect `examples/sample_dataset.jsonl` for expected format
+> **💻 No GPU required.** The data generation pipeline runs entirely on CPU (Docling + sentence-transformers + OpenAI API). You can generate the dataset locally on macOS or Linux.
+
+1. Install base dependencies: `pip install -e "."` (or run `bash local_setup.sh`)
+2. Place your PDF documents in `./manuals/`
+3. Set `OPENAI_API_KEY` environment variable
+4. Run `python build_dataset.py`
+5. Inspect `examples/sample_dataset.jsonl` for expected format
+6. Transfer the generated `.jsonl` files to your GPU environment for training (Phases 3–6)
+

@@ -25,12 +25,33 @@
 
 ## ⚡ Quick Start
 
+### Option A: Local Data Generation Only (No GPU Required)
+
+Phase 2 (PDF → dataset) runs entirely on CPU. You can generate your training data on any macOS or Linux machine:
+
 ```bash
-# 1. Clone and install dependencies
+# 1. Clone and install base dependencies
 git clone <your-repo-url> && cd olmo
-pip install -e ".[training]"
+pip install -e "."          # Base deps only (no training/GPU packages)
 
 # 2. Generate the dataset from your PDFs
+export OPENAI_API_KEY="your_key_here"
+mkdir -p manuals && cp /path/to/your/*.pdf manuals/
+python build_dataset.py
+
+# 3. (Optional) Generate the golden evaluation set
+python generate_golden_eval.py
+```
+
+Then transfer the generated `alignment_dataset.jsonl` and `golden_eval.jsonl` to your GPU environment for training.
+
+### Option B: Full Pipeline (GPU Required)
+
+```bash
+# 1. On the GPU pod, install all dependencies
+pip install -e ".[training]"
+
+# 2. Generate dataset (or upload the .jsonl files generated locally)
 export OPENAI_API_KEY="your_key_here"
 python build_dataset.py
 
@@ -41,7 +62,7 @@ python evaluate.py
 python merge_model.py
 ```
 
-**Hardware Requirements:** ≥ 24 GB VRAM (A100, RTX 3090/4090, or RTX 6000 Ada). If no Ampere GPU is available, use FP16 instead of BF16 and disable Flash Attention 2.
+**Hardware Requirements (Phases 3–6):** ≥ 24 GB VRAM (A100, RTX 3090/4090, or RTX 6000 Ada). If no Ampere GPU is available, use FP16 instead of BF16 and disable Flash Attention 2.
 
 ---
 
@@ -96,7 +117,8 @@ olmo/
 ├── evaluate.py                     # Phase 5 — Evaluation & Red Teaming (--baseline)
 ├── merge_model.py                  # Phase 6 — Weight Merging for Deployment
 ├── Makefile                        # Dev targets (make data, make train-sft, etc.)
-├── runpod_setup.sh                 # RunPod GPU environment setup
+├── local_setup.sh                  # Local macOS/Linux setup for Phase 2 (no GPU)
+├── runpod_setup.sh                 # RunPod GPU environment setup (Phases 3–6)
 ├── olmo.ipynb                      # Exploratory notebook
 ├── examples/
 │   └── sample_dataset.jsonl        # 10 representative training examples
@@ -159,6 +181,11 @@ See Phase 5 in `sft_plan.md` for the full evaluation script.
 
 ## 🖥️ Infrastructure & Environment
 
+### Local (Phase 2 — Data Generation)
+* **`local_setup.sh`** — Sets up a local Python virtual environment with base dependencies for PDF extraction and dataset generation. No GPU required.
+* **Requirements:** Python ≥ 3.10, macOS or Linux, OpenAI API key.
+
+### Remote GPU Pod (Phases 3–6 — Training & Deployment)
 * **`runpod_setup.sh`** — Initializes the RunPod GPU environment: installs the HF fine-tuning stack, Flash Attention 2, and launches MLflow UI.
 * **Hardware:** Minimum 24 GB VRAM, RunPod PyTorch template recommended.
 * **Storage:** ≥ 50 GB Container Disk + 100 GB Volume Disk.
@@ -167,11 +194,15 @@ See Phase 5 in `sft_plan.md` for the full evaluation script.
 
 ## 🚀 Suggested Execution Order
 
-1. Connect to the GPU Pod and run `bash runpod_setup.sh`.
+### Steps 1–3: Data Curation (can run locally — no GPU)
+1. Run `bash local_setup.sh` (or `pip install -e "."` manually).
 2. Export the OpenAI API key: `export OPENAI_API_KEY="your_key_here"`.
-3. Upload your target PDFs to the `./manuals/` directory.
-4. Execute `python build_dataset.py` to generate the JSONL dataset.
-5. Follow the Python scripts in `sft_plan.md` for Phase 3 (SFT) and Phase 4 (DPO).
+3. Place your target PDFs in `./manuals/` and run `python build_dataset.py`.
+
+### Steps 4–6: Training & Deployment (GPU required)
+4. Connect to the GPU pod and run `bash runpod_setup.sh`.
+5. Transfer `alignment_dataset.jsonl` and `golden_eval.jsonl` to the pod (if generated locally).
+6. Follow the Python scripts in `sft_plan.md` for Phase 3 (SFT), Phase 4 (DPO), Phase 5 (Eval), and Phase 6 (Merge).
 
 ---
 

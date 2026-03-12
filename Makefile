@@ -1,4 +1,4 @@
-.PHONY: install data train-sft train-dpo eval eval-baseline merge serve lint clean help
+.PHONY: install local-setup data train-sft train-dpo eval eval-baseline merge serve lint clean help
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -7,18 +7,21 @@ help: ## Show this help message
 # Setup
 # ──────────────────────────────────────────────
 
-install: ## Install all dependencies (runtime + training + dev)
+install: ## Install all dependencies — runtime + training + dev (GPU required)
 	pip install -e ".[training,dev]"
 
+local-setup: ## Set up local environment for Phase 2 data generation (no GPU)
+	bash local_setup.sh
+
 # ──────────────────────────────────────────────
-# Data Pipeline (Phase 2)
+# Data Pipeline (Phase 2) — runs locally, no GPU needed
 # ──────────────────────────────────────────────
 
-data: ## Generate the training dataset from PDFs in ./manuals/
+data: ## Generate the training dataset from PDFs in ./manuals/ (no GPU)
 	python build_dataset.py
 
 # ──────────────────────────────────────────────
-# Training (Phases 3–4)
+# Training (Phases 3–4) — GPU required
 # ──────────────────────────────────────────────
 
 train-sft: ## Run Supervised Fine-Tuning (Phase 3)
@@ -28,7 +31,7 @@ train-dpo: ## Run DPO Preference Alignment (Phase 4)
 	python train_dpo.py
 
 # ──────────────────────────────────────────────
-# Evaluation (Phase 5)
+# Evaluation (Phase 5) — GPU required
 # ──────────────────────────────────────────────
 
 eval: ## Evaluate the fine-tuned model
@@ -38,7 +41,7 @@ eval-baseline: ## Evaluate with base model baseline comparison
 	python evaluate.py --baseline
 
 # ──────────────────────────────────────────────
-# Deployment (Phase 6)
+# Deployment (Phase 6) — GPU required
 # ──────────────────────────────────────────────
 
 merge: ## Merge LoRA adapters into standalone model

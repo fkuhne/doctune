@@ -1,7 +1,11 @@
 #!/bin/bash
 # ==============================================================================
-# RunPod Initialization Script
+# RunPod Initialization Script — Phases 3–6 (GPU Required)
 # Target: OLMo 2 1B Domain-Specific Fine-Tuning
+# ==============================================================================
+# This script sets up the remote GPU pod for training, alignment, evaluation,
+# and deployment. Phase 2 (data curation) can be done locally — see
+# local_setup.sh for the local alternative.
 # ==============================================================================
 
 set -e # Exit immediately if a command exits with a non-zero status
