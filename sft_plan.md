@@ -62,12 +62,13 @@ model.print_trainable_parameters()
 > **Local Setup:**
 > 1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 > 2. Create a venv and install deps: `uv venv .venv && source .venv/bin/activate && uv pip install -e .`
-> 3. Export your API key:
+> 3. Export your API key (skip this step if using Ollama):
 >    - **OpenAI:** `export OPENAI_API_KEY="your_key_here"`
 >    - **Anthropic:** `export ANTHROPIC_API_KEY="your_key_here"`
 > 4. Place your PDFs in `./manuals/`
 > 5. Run: `python build_dataset.py` (defaults to `gpt-4o`)
 >    - For Anthropic: `python build_dataset.py --model claude-3-5-sonnet-20241022`
+>    - For Ollama (free, local): `python build_dataset.py --model llama3.1:8b`
 > 6. (Optional) Generate the golden eval set: `python generate_golden_eval.py`
 > 7. Transfer the generated `.jsonl` files to the GPU pod for Phases 3–6.
 
@@ -84,7 +85,7 @@ model.print_trainable_parameters()
 
 ### Step 3: Synthetic SFT Data Generation
 
-- **Teacher Model:** Utilize a frontier API (e.g., GPT-4o or Claude 3.5 Sonnet) to act as the data synthesizer. The model and provider are configurable via `--model` and `--provider` CLI arguments.
+- **Teacher Model:** Utilize a frontier API (e.g., GPT-4o or Claude 3.5 Sonnet) or a free local model via Ollama (e.g., `llama3.1:8b`). The model and provider are configurable via `--model` and `--provider` CLI arguments.
 - **Prompting Protocol:** Feed each chunk to the Teacher Model with a strict system prompt: "Given the following technical manual excerpt, generate 3 to 5 realistic user questions and their corresponding step-by-step, accurate answers based strictly on the text."
 - **Formatting:** Force the Teacher Model to output structured JSON containing `prompt` (the user question) and `response` (the factual answer).
 

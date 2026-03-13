@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -20,31 +20,41 @@ class DPOResponse(BaseModel):
 # ==============================================================================
 # Provider Detection Helpers
 # ==============================================================================
-ANTHROPIC_MODELS = {"claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus", "claude-3-haiku", "claude-3-sonnet"}
+OLLAMA_DEFAULT_MODEL = "llama3.1:8b"
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
 def detect_provider(model: str) -> str:
     """Auto-detect provider from model name."""
     lower = model.lower()
     if "claude" in lower:
         return "anthropic"
-    return "openai"
+    if "gpt" in lower or "o1" in lower or "o3" in lower:
+        return "openai"
+    # If it doesn't look like a cloud model, assume Ollama (local)
+    return "ollama"
 
-def _build_openai_client(api_key: str | None = None):
+def _build_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = None):
     from openai import OpenAI
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if not key:
         raise ValueError("OpenAI API key required. Set OPENAI_API_KEY env var or pass api_key=.")
-    return OpenAI(api_key=key)
+    return OpenAI(api_key=key, base_url=base_url)
 
-def _build_anthropic_client(api_key: str | None = None):
+def _build_anthropic_client(api_key: Optional[str] = None):
     try:
         import anthropic
     except ImportError:
-        raise ImportError("The 'anthropic' package is required for Anthropic models. Run: pip install anthropic")
+        raise ImportError("The 'anthropic' package is required for Anthropic models. Run: uv pip install anthropic")
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise ValueError("Anthropic API key required. Set ANTHROPIC_API_KEY env var or pass api_key=.")
     return anthropic.Anthropic(api_key=key)
+
+def _build_ollama_client(base_url: Optional[str] = None):
+    """Ollama exposes an OpenAI-compatible API — reuse the OpenAI SDK with a custom base_url."""
+    from openai import OpenAI
+    url = base_url or os.environ.get("OLLAMA_BASE_URL", OLLAMA_BASE_URL)
+    return OpenAI(api_key="ollama", base_url=url)  # api_key is required by SDK but ignored by Ollama
 
 # ==============================================================================
 # Synthetic Data Generator Class
@@ -53,18 +63,20 @@ class TeacherModelSynthesizer:
     def __init__(
         self,
         domain: str = "technical documentation",
-        api_key: str | None = None,
+        api_key: Optional[str] = None,
         model: str = "gpt-4o",
-        provider: str | None = None,
+        provider: Optional[str] = None,
+        ollama_base_url: Optional[str] = None,
     ):
         """
-        Initializes the Teacher Model synthesizer with support for OpenAI and Anthropic.
+        Initializes the Teacher Model synthesizer with support for OpenAI, Anthropic, and Ollama.
 
         Args:
             domain: The subject-matter domain for prompt context (e.g., "medical devices", "automotive repair").
-            api_key: API key for the chosen provider. Falls back to OPENAI_API_KEY or ANTHROPIC_API_KEY env vars.
-            model: The teacher model identifier (e.g., "gpt-4o", "claude-3-5-sonnet-20241022").
-            provider: "openai" or "anthropic". Auto-detected from model name if not specified.
+            api_key: API key for the chosen provider. Falls back to env vars. Not needed for Ollama.
+            model: The teacher model identifier (e.g., "gpt-4o", "claude-3-5-sonnet-20241022", "llama3.1:8b").
+            provider: "openai", "anthropic", or "ollama". Auto-detected from model name if not specified.
+            ollama_base_url: Custom Ollama server URL (default: http://localhost:11434/v1).
         """
         self.model = model
         self.provider = provider or detect_provider(model)
@@ -76,8 +88,10 @@ class TeacherModelSynthesizer:
             self.client = _build_openai_client(api_key)
         elif self.provider == "anthropic":
             self.client = _build_anthropic_client(api_key)
+        elif self.provider == "ollama":
+            self.client = _build_ollama_client(ollama_base_url)
         else:
-            raise ValueError(f"Unsupported provider: {self.provider}. Use 'openai' or 'anthropic'.")
+            raise ValueError(f"Unsupported provider: {self.provider}. Use 'openai', 'anthropic', or 'ollama'.")
 
     # --------------------------------------------------------------------------
     # OpenAI implementation (structured outputs via Pydantic)
@@ -92,7 +106,7 @@ class TeacherModelSynthesizer:
         )
         return [pair.model_dump() for pair in response.output_parsed.qa_pairs]
 
-    def _openai_generate_dpo(self, system_prompt: str, user_prompt: str) -> str | None:
+    def _openai_generate_dpo(self, system_prompt: str, user_prompt: str) -> Optional[str]:
         response = self.client.responses.parse(
             model=self.model,
             instructions=system_prompt,
@@ -117,7 +131,6 @@ class TeacherModelSynthesizer:
         return response.content[0].text
 
     def _anthropic_generate_sft(self, system_prompt: str, user_prompt: str) -> List[dict]:
-        # Append JSON formatting instruction for Anthropic
         json_instruction = (
             "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
             '{"qa_pairs": [{"prompt": "...", "chosen": "..."}]}\n'
@@ -127,13 +140,49 @@ class TeacherModelSynthesizer:
         parsed = SFTResponse.model_validate_json(raw)
         return [pair.model_dump() for pair in parsed.qa_pairs]
 
-    def _anthropic_generate_dpo(self, system_prompt: str, user_prompt: str) -> str | None:
+    def _anthropic_generate_dpo(self, system_prompt: str, user_prompt: str) -> Optional[str]:
         json_instruction = (
             "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
             '{"rejected": "..."}\n'
             "Do not include any text outside the JSON object."
         )
         raw = self._anthropic_call(system_prompt + json_instruction, user_prompt, temperature=0.5)
+        parsed = DPOResponse.model_validate_json(raw)
+        return parsed.rejected
+
+    # --------------------------------------------------------------------------
+    # Ollama implementation (OpenAI-compatible API with JSON mode)
+    # --------------------------------------------------------------------------
+    def _ollama_call(self, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
+        """Makes an Ollama API call via the OpenAI-compatible endpoint."""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            response_format={"type": "json_object"},
+        )
+        return response.choices[0].message.content
+
+    def _ollama_generate_sft(self, system_prompt: str, user_prompt: str) -> List[dict]:
+        json_instruction = (
+            "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
+            '{"qa_pairs": [{"prompt": "...", "chosen": "..."}]}\n'
+            "Do not include any text outside the JSON object."
+        )
+        raw = self._ollama_call(system_prompt + json_instruction, user_prompt, temperature=0.3)
+        parsed = SFTResponse.model_validate_json(raw)
+        return [pair.model_dump() for pair in parsed.qa_pairs]
+
+    def _ollama_generate_dpo(self, system_prompt: str, user_prompt: str) -> Optional[str]:
+        json_instruction = (
+            "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
+            '{"rejected": "..."}\n'
+            "Do not include any text outside the JSON object."
+        )
+        raw = self._ollama_call(system_prompt + json_instruction, user_prompt, temperature=0.5)
         parsed = DPOResponse.model_validate_json(raw)
         return parsed.rejected
 
@@ -159,13 +208,15 @@ class TeacherModelSynthesizer:
         try:
             if self.provider == "openai":
                 return self._openai_generate_sft(system_prompt, user_prompt)
-            else:
+            elif self.provider == "anthropic":
                 return self._anthropic_generate_sft(system_prompt, user_prompt)
+            else:
+                return self._ollama_generate_sft(system_prompt, user_prompt)
         except Exception as e:
             print(f"SFT Generation Error: {e}")
             return []
 
-    def generate_dpo_rejection(self, prompt: str, chosen: str) -> str | None:
+    def generate_dpo_rejection(self, prompt: str, chosen: str) -> Optional[str]:
         """
         Takes a generated SFT pair and generates a subtly flawed 'rejected' answer for DPO alignment.
         """
@@ -182,8 +233,10 @@ class TeacherModelSynthesizer:
         try:
             if self.provider == "openai":
                 return self._openai_generate_dpo(system_prompt, user_prompt)
-            else:
+            elif self.provider == "anthropic":
                 return self._anthropic_generate_dpo(system_prompt, user_prompt)
+            else:
+                return self._ollama_generate_dpo(system_prompt, user_prompt)
         except Exception as e:
             print(f"DPO Generation Error: {e}")
             return None
@@ -220,8 +273,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Teacher Model Synthetic Data Generator")
-    parser.add_argument("--model", default="gpt-4o", help="Teacher model ID (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
-    parser.add_argument("--provider", default=None, help="API provider: 'openai' or 'anthropic' (auto-detected from model name)")
+    parser.add_argument("--model", default="gpt-4o", help="Teacher model ID (e.g., gpt-4o, claude-3-5-sonnet-20241022, llama3.1:8b)")
+    parser.add_argument("--provider", default=None, help="API provider: 'openai', 'anthropic', or 'ollama' (auto-detected from model name)")
     parser.add_argument("--domain", default="technical documentation", help="Subject-matter domain")
     args = parser.parse_args()
 

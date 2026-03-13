@@ -25,9 +25,33 @@
 
 ## ⚡ Quick Start
 
-### Option A: Local Data Generation Only (No GPU Required)
+### Option A: Free Local Data Generation (Ollama — No API Key, No GPU)
 
-Phase 2 (PDF → dataset) runs entirely on CPU. You can generate your training data on any macOS or Linux machine:
+Run everything locally using free, open-weight LLMs via [Ollama](https://ollama.com):
+
+```bash
+# 1. Install Ollama (https://ollama.com/download)
+curl -fsSL https://ollama.com/install.sh | sh   # Linux
+# macOS: download from https://ollama.com/download
+
+# 2. Pull a model (llama3.1:8b is a good default)
+ollama pull llama3.1:8b
+
+# 3. Clone the repo and set up
+git clone <your-repo-url> && cd olmo
+uv venv .venv && source .venv/bin/activate
+uv pip install -e "."
+
+# 4. Generate the dataset — no API key needed!
+mkdir -p manuals && cp /path/to/your/*.pdf manuals/
+python build_dataset.py --model llama3.1:8b
+```
+
+> **Tip:** For better quality output, use a larger model like `llama3.1:70b` or `qwen2.5:14b` if your machine has enough RAM.
+
+### Option B: Paid API Data Generation (OpenAI / Anthropic — No GPU)
+
+Higher quality synthetic data using cloud APIs:
 
 ```bash
 # 1. Clone the repo
@@ -55,7 +79,7 @@ python generate_golden_eval.py
 
 Then transfer the generated `alignment_dataset.jsonl` and `golden_eval.jsonl` to your GPU environment for training.
 
-### Option B: Full Pipeline (GPU Required)
+### Option C: Full Pipeline (GPU Required)
 
 ```bash
 # 1. On the GPU pod, install all dependencies
@@ -155,7 +179,7 @@ These modular Python scripts handle the conversion of raw PDFs into a training-r
 |---|---|
 | `build_dataset.py` | **Orchestrator.** Scans `./manuals/`, processes every PDF, and outputs `alignment_dataset.jsonl`. Supports `--model` and `--provider` flags. |
 | `pdf_extractor.py` | **Ingestion.** Uses IBM Docling for layout-aware PDF parsing with table preservation. |
-| `teacher_model_synthesis.py` | **Synthesis.** Generates SFT + DPO pairs via OpenAI or Anthropic with Pydantic structured outputs. Configurable domain, model, and provider. |
+| `teacher_model_synthesis.py` | **Synthesis.** Generates SFT + DPO pairs via OpenAI, Anthropic, or Ollama (local). Configurable domain, model, and provider. |
 | `deduplicate_dataset.py` | **Quality Control.** Cosine similarity dedup (threshold > 0.85) using `all-MiniLM-L6-v2`. |
 | `generate_golden_eval.py` | **Evaluation.** Generates 100 complex multi-step evaluation scenarios. Supports `--model`, `--provider`, and `--count` flags. |
 

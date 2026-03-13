@@ -1,17 +1,23 @@
 import os
 import json
 import argparse
+from typing import Optional
 
 # ==============================================================================
 # Provider Detection (shared logic with teacher_model_synthesis.py)
 # ==============================================================================
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
+
 def detect_provider(model: str) -> str:
     """Auto-detect provider from model name."""
-    if "claude" in model.lower():
+    lower = model.lower()
+    if "claude" in lower:
         return "anthropic"
-    return "openai"
+    if "gpt" in lower or "o1" in lower or "o3" in lower:
+        return "openai"
+    return "ollama"
 
-def build_client(provider: str, api_key: str | None = None):
+def build_client(provider: str, api_key: Optional[str] = None, ollama_base_url: Optional[str] = None):
     """Build the appropriate API client for the given provider."""
     if provider == "openai":
         from openai import OpenAI
@@ -23,11 +29,15 @@ def build_client(provider: str, api_key: str | None = None):
         try:
             import anthropic
         except ImportError:
-            raise ImportError("The 'anthropic' package is required. Run: pip install anthropic")
+            raise ImportError("The 'anthropic' package is required. Run: uv pip install anthropic")
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise ValueError("Set ANTHROPIC_API_KEY env var or pass --api-key.")
         return anthropic.Anthropic(api_key=key)
+    elif provider == "ollama":
+        from openai import OpenAI
+        url = ollama_base_url or os.environ.get("OLLAMA_BASE_URL", OLLAMA_BASE_URL)
+        return OpenAI(api_key="ollama", base_url=url)
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
@@ -61,14 +71,34 @@ def generate_scenarios_anthropic(client, model: str, system_prompt: str, domain:
     data = json.loads(response.content[0].text)
     return data.get("scenarios", [])
 
+def generate_scenarios_ollama(client, model: str, system_prompt: str, domain: str, batch_size: int = 10):
+    """Uses Ollama's OpenAI-compatible chat completions endpoint with JSON mode."""
+    user_prompt = (
+        f"Generate exactly {batch_size} complex, edge-case {domain} scenarios focusing on multi-step reasoning.\n\n"
+        "You MUST respond with valid JSON only, using a single key \"scenarios\" containing an array of objects.\n"
+        "Each object MUST have keys: \"prompt\", \"chosen\", \"rejected\".\n"
+        "Do not include any text outside the JSON object."
+    )
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.7,
+        response_format={"type": "json_object"},
+    )
+    data = json.loads(response.choices[0].message.content)
+    return data.get("scenarios", [])
+
 # ==============================================================================
 # Main
 # ==============================================================================
 def main():
     parser = argparse.ArgumentParser(description="Generate golden evaluation scenarios for domain QA")
-    parser.add_argument("--model", default="gpt-4o", help="Teacher model ID (e.g., gpt-4o, claude-3-5-sonnet-20241022)")
-    parser.add_argument("--provider", default=None, help="API provider: 'openai' or 'anthropic' (auto-detected from model name)")
-    parser.add_argument("--api-key", default=None, help="API key (falls back to OPENAI_API_KEY or ANTHROPIC_API_KEY env var)")
+    parser.add_argument("--model", default="gpt-4o", help="Teacher model ID (e.g., gpt-4o, claude-3-5-sonnet-20241022, llama3.1:8b)")
+    parser.add_argument("--provider", default=None, help="API provider: 'openai', 'anthropic', or 'ollama' (auto-detected from model name)")
+    parser.add_argument("--api-key", default=None, help="API key (falls back to env vars; not needed for Ollama)")
     parser.add_argument("--count", type=int, default=100, help="Number of scenarios to generate (default: 100)")
     parser.add_argument("--output", default="golden_eval.jsonl", help="Output file path (default: golden_eval.jsonl)")
     args = parser.parse_args()
@@ -90,7 +120,12 @@ Each object MUST have the following keys:
 - "rejected": A plausible but incorrect or factually flawed resolution that might mislead a user or cause further issues.
 """
 
-    generate_fn = generate_scenarios_openai if provider == "openai" else generate_scenarios_anthropic
+    generate_fns = {
+        "openai": generate_scenarios_openai,
+        "anthropic": generate_scenarios_anthropic,
+        "ollama": generate_scenarios_ollama,
+    }
+    generate_fn = generate_fns[provider]
     batch_size = 10
 
     print(f"Generating {args.count} complex {domain} scenarios using {provider}:{args.model}...")
