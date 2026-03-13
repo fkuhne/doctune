@@ -23,19 +23,20 @@ cd /workspace/olmo-finetune
 echo "Updating apt repositories..."
 apt-get update -y && apt-get install -y git wget tmux jq
 
-# 3. Upgrade pip to prevent dependency resolution errors
-echo "Upgrading pip..."
-python3 -m pip install --upgrade pip
+# 3. Install uv (much faster dependency resolution than pip)
+echo "Installing uv..."
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env" 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
 
 # 4. Install the Hugging Face Fine-Tuning Stack
 echo "Installing transformers, peft, trl, and dependencies..."
-pip install "transformers>=4.48" peft trl accelerate datasets bitsandbytes unstructured marker-pdf mlflow
+uv pip install --system "transformers>=4.48" peft trl accelerate datasets bitsandbytes unstructured marker-pdf mlflow
 
 # 5. Install Flash Attention 2
-# We use --no-build-isolation to force pip to use the pre-installed PyTorch/CUDA 
+# We use --no-build-isolation to force uv to use the pre-installed PyTorch/CUDA
 # environment, which prevents it from taking 45 minutes to compile from scratch.
 echo "Compiling and installing Flash Attention 2..."
-pip install flash-attn --no-build-isolation
+uv pip install --system flash-attn --no-build-isolation
 
 echo "========================================================================"
 echo "Setup Complete! The environment is ready."

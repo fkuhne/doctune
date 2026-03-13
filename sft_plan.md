@@ -10,7 +10,7 @@
 
 - **Compute Provisioning:** Allocate a single-node GPU instance with at least 24GB VRAM (e.g., 1x A100, RTX 3090/4090, or RTX 6000 Ada) to comfortably handle 1B parameter LoRA training.
 - **Hardware Fallback Directive:** If an Ampere-architecture GPU (A100, RTX 3090/4090) is unavailable, the agent MUST fallback to `torch_dtype=torch.float16` and remove the `attn_implementation="flash_attention_2"` argument from the base model initialization across all scripts.
-- **Environment Dependencies:** Install `transformers>=4.48`, `peft`, `trl`, `accelerate`, `bitsandbytes`, and `flash-attn`.
+- **Environment Dependencies:** Install `transformers>=4.48`, `peft`, `trl`, `accelerate`, `bitsandbytes`, and `flash-attn`. Use `uv` for fast, reliable dependency resolution.
 - **Implementation Payload:** Execute the exact Python script below to initialize the tokenizer, load the base model in BF16 precision, and inject the Low-Rank Adapters (LoRA).
 
 ```python
@@ -60,15 +60,16 @@ model.print_trainable_parameters()
 > **💻 Local Execution Supported:** Phase 2 does **not** require a GPU. All operations (PDF parsing via Docling, API calls, sentence-transformer deduplication) run on CPU. You can execute this entire phase on your local macOS or Linux workstation before provisioning a GPU pod for Phases 3–6.
 >
 > **Local Setup:**
-> 1. Install base dependencies: `pip install -e .`
-> 2. Export your API key:
+> 1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+> 2. Create a venv and install deps: `uv venv .venv && source .venv/bin/activate && uv pip install -e .`
+> 3. Export your API key:
 >    - **OpenAI:** `export OPENAI_API_KEY="your_key_here"`
 >    - **Anthropic:** `export ANTHROPIC_API_KEY="your_key_here"`
-> 3. Place your PDFs in `./manuals/`
-> 4. Run: `python build_dataset.py` (defaults to `gpt-4o`)
+> 4. Place your PDFs in `./manuals/`
+> 5. Run: `python build_dataset.py` (defaults to `gpt-4o`)
 >    - For Anthropic: `python build_dataset.py --model claude-3-5-sonnet-20241022`
-> 5. (Optional) Generate the golden eval set: `python generate_golden_eval.py`
-> 6. Transfer the generated `.jsonl` files to the GPU pod for Phases 3–6.
+> 6. (Optional) Generate the golden eval set: `python generate_golden_eval.py`
+> 7. Transfer the generated `.jsonl` files to the GPU pod for Phases 3–6.
 
 ### Step 1: Document Ingestion and Layout Parsing
 

@@ -8,7 +8,7 @@ help: ## Show this help message
 # ──────────────────────────────────────────────
 
 install: ## Install all dependencies — runtime + training + dev (GPU required)
-	pip install -e ".[training,dev]"
+	uv pip install -e ".[training,dev]"
 
 local-setup: ## Set up local environment for Phase 2 data generation (no GPU)
 	bash local_setup.sh

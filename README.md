@@ -30,11 +30,17 @@
 Phase 2 (PDF → dataset) runs entirely on CPU. You can generate your training data on any macOS or Linux machine:
 
 ```bash
-# 1. Clone and install base dependencies
+# 1. Clone the repo
 git clone <your-repo-url> && cd olmo
-pip install -e "."          # Base deps only (no training/GPU packages)
 
-# 2. Generate the dataset from your PDFs
+# 2. Install uv (if you don't have it already)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 3. Create a virtual environment and install base dependencies
+uv venv .venv && source .venv/bin/activate
+uv pip install -e "."       # Base deps only (no training/GPU packages)
+
+# 4. Generate the dataset from your PDFs
 export OPENAI_API_KEY="your_key_here"
 mkdir -p manuals && cp /path/to/your/*.pdf manuals/
 python build_dataset.py
@@ -43,7 +49,7 @@ python build_dataset.py
 export ANTHROPIC_API_KEY="your_key_here"
 python build_dataset.py --model claude-3-5-sonnet-20241022
 
-# 3. (Optional) Generate the golden evaluation set
+# 5. (Optional) Generate the golden evaluation set
 python generate_golden_eval.py
 ```
 
@@ -53,7 +59,7 @@ Then transfer the generated `alignment_dataset.jsonl` and `golden_eval.jsonl` to
 
 ```bash
 # 1. On the GPU pod, install all dependencies
-pip install -e ".[training]"
+uv pip install -e ".[training]"
 
 # 2. Generate dataset (or upload the .jsonl files generated locally)
 export OPENAI_API_KEY="your_key_here"   # or ANTHROPIC_API_KEY

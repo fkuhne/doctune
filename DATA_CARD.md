@@ -83,7 +83,7 @@ Every row in the dataset strictly follows this structure:
 
 > **💻 No GPU required.** The data generation pipeline runs entirely on CPU (Docling + sentence-transformers + OpenAI API). You can generate the dataset locally on macOS or Linux.
 
-1. Install base dependencies: `pip install -e "."` (or run `bash local_setup.sh`)
+1. Install base dependencies: `uv pip install -e "."` (or run `bash local_setup.sh`)
 2. Place your PDF documents in `./manuals/`
 3. Set `OPENAI_API_KEY` environment variable
 4. Run `python build_dataset.py`
