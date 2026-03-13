@@ -49,8 +49,7 @@ def generate_scenarios_openai(client, model: str, system_prompt: str, domain: st
         model=model,
         instructions=system_prompt,
         input=f"Generate exactly {batch_size} complex, edge-case {domain} scenarios focusing on multi-step reasoning. Output valid JSON.",
-        text={"format": {"type": "json_object"}},
-        temperature=0.7
+        text={"format": {"type": "json_object"}}
     )
     data = json.loads(response.output_text)
     return data.get("scenarios", [])

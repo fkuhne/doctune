@@ -63,7 +63,6 @@ def judge_response(prompt: str, response: str, test_type: str) -> dict | None:
             model="gpt-4o",
             instructions=JUDGE_SYSTEM_PROMPT,
             input=user_msg,
-            temperature=0.0,
             max_output_tokens=200,
         )
 

@@ -102,7 +102,6 @@ class TeacherModelSynthesizer:
             instructions=system_prompt,
             input=user_prompt,
             text_format=SFTResponse,
-            temperature=0.3,
         )
         return [pair.model_dump() for pair in response.output_parsed.qa_pairs]
 
@@ -112,7 +111,6 @@ class TeacherModelSynthesizer:
             instructions=system_prompt,
             input=user_prompt,
             text_format=DPOResponse,
-            temperature=0.5,
         )
         return response.output_parsed.rejected
 
