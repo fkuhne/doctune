@@ -22,34 +22,35 @@ data: ## Generate the training dataset from PDFs in ./manuals/ (no GPU)
 
 # ──────────────────────────────────────────────
 # Training (Phases 3–4) — GPU required
+# NOTE: You must pass --model-id <your-hf-model-id> to these scripts
 # ──────────────────────────────────────────────
 
-train-sft: ## Run Supervised Fine-Tuning (Phase 3)
-	python train_sft.py
+train-sft: ## Run Supervised Fine-Tuning (Phase 3) — requires MODEL_ID env var
+	python train_sft.py --model-id $(MODEL_ID)
 
-train-dpo: ## Run DPO Preference Alignment (Phase 4)
-	python train_dpo.py
+train-dpo: ## Run DPO Preference Alignment (Phase 4) — requires MODEL_ID env var
+	python train_dpo.py --model-id $(MODEL_ID)
 
 # ──────────────────────────────────────────────
 # Evaluation (Phase 5) — GPU required
 # ──────────────────────────────────────────────
 
-eval: ## Evaluate the fine-tuned model
-	python evaluate.py
+eval: ## Evaluate the fine-tuned model — requires MODEL_ID env var
+	python evaluate.py --model-id $(MODEL_ID)
 
 eval-baseline: ## Evaluate with base model baseline comparison
-	python evaluate.py --baseline
+	python evaluate.py --model-id $(MODEL_ID) --baseline
 
 # ──────────────────────────────────────────────
 # Deployment (Phase 6) — GPU required
 # ──────────────────────────────────────────────
 
-merge: ## Merge LoRA adapters into standalone model
-	python merge_model.py
+merge: ## Merge LoRA adapters into standalone model — requires MODEL_ID env var
+	python merge_model.py --model-id $(MODEL_ID)
 
 serve: ## Launch vLLM inference server (requires merged model)
 	python -m vllm.entrypoints.openai.api_server \
-		--model ./olmo2-1b-domain-merged \
+		--model ./doctune-merged \
 		--dtype bfloat16 \
 		--max-model-len 2048 \
 		--port 8000
@@ -63,6 +64,5 @@ lint: ## Run ruff linter
 
 clean: ## Remove generated artifacts (datasets, checkpoints)
 	rm -rf alignment_dataset.jsonl golden_eval.jsonl
-	rm -rf olmo2-1b-domain-sft olmo2-1b-domain-dpo olmo2-1b-domain-merged
-	rm -rf olmo2-dpo-beta*
+	rm -rf doctune-sft doctune-dpo doctune-merged
 	rm -rf mlruns/

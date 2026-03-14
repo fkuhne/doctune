@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # RunPod Initialization Script — Phases 3–6 (GPU Required)
-# Target: OLMo 2 1B Domain-Specific Fine-Tuning
+# Target: Domain-Specific Fine-Tuning with Doctune
 # ==============================================================================
 # This script sets up the remote GPU pod for training, alignment, evaluation,
 # and deployment. Phase 2 (data curation) can be done locally — see
@@ -16,8 +16,8 @@ echo "--- Starting RunPod Environment Setup ---"
 # RunPod provides a /workspace directory that persists across pod restarts.
 # NEVER store datasets or model weights outside of this directory.
 cd /workspace
-mkdir -p /workspace/olmo-finetune
-cd /workspace/olmo-finetune
+mkdir -p /workspace/doctune
+cd /workspace/doctune
 
 # 2. Update system packages (just in case the base image is stale)
 echo "Updating apt repositories..."
@@ -42,7 +42,11 @@ echo "========================================================================"
 echo "Setup Complete! The environment is ready."
 echo "Hardware Check:"
 nvidia-smi
-echo "Directory /workspace/olmo-finetune is prepped for Phase 2 data generation."
+echo "Directory /workspace/doctune is prepped for training."
+echo ""
+echo "Next steps:"
+echo "  export MODEL_ID=\"your-hf-model-id\"  # e.g. meta-llama/Llama-3.1-8B"
+echo "  python train_sft.py --model-id \$MODEL_ID"
 echo "========================================================================"
 
 # Launch MLflow UI in the background

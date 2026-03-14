@@ -1,5 +1,5 @@
 """
-train_dpo.py — Direct Preference Optimization (DPO) for OLMo 2 1B
+train_dpo.py — Direct Preference Optimization (DPO)
 
 Runs Phase 4 of the training pipeline: aligns the SFT-trained model using
 preference tuples (chosen vs. rejected) to penalize hallucinations.
@@ -7,7 +7,7 @@ preference tuples (chosen vs. rejected) to penalize hallucinations.
 Supports hyperparameter sweeping over beta and learning rate values.
 
 Usage:
-    python train_dpo.py [--sft-adapter SFT_PATH] [--dataset DATASET_PATH]
+    python train_dpo.py --model-id <huggingface-model-id> [--sft-adapter SFT_PATH] [--dataset DATASET_PATH]
 
 Requirements:
     pip install -e ".[training]"
@@ -21,14 +21,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from peft import PeftModel
 from trl import DPOTrainer
 
+from model_utils import detect_attn_implementation, derive_run_name
+
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="OLMo 2 1B DPO Training")
-    parser.add_argument("--model-id", type=str, default="allenai/OLMo-2-0425-1B")
-    parser.add_argument("--sft-adapter", type=str, default="./olmo2-1b-domain-sft")
+    parser = argparse.ArgumentParser(description="Doctune DPO Training")
+    parser.add_argument("--model-id", type=str, required=True, help="HuggingFace model ID (e.g. meta-llama/Llama-3.1-8B)")
+    parser.add_argument("--sft-adapter", type=str, default="./doctune-sft")
     parser.add_argument("--dataset", type=str, default="alignment_dataset.jsonl")
     parser.add_argument("--eval-dataset", type=str, default="golden_eval.jsonl")
-    parser.add_argument("--output", type=str, default="./olmo2-1b-domain-dpo")
+    parser.add_argument("--output", type=str, default="./doctune-dpo")
     parser.add_argument("--betas", type=float, nargs="+", default=[0.1, 0.25], help="DPO beta values to sweep")
     parser.add_argument("--lrs", type=float, nargs="+", default=[5e-6, 1e-6], help="Learning rates to sweep")
     return parser.parse_args()
@@ -45,11 +47,12 @@ def main() -> None:
 
     # 2. Load Base Model and SFT Adapters
     print("Loading Base Model and SFT Adapters...")
+    attn_impl = detect_attn_implementation()
     base_model = AutoModelForCausalLM.from_pretrained(
         args.model_id,
         torch_dtype=torch.bfloat16,
         device_map="auto",
-        attn_implementation="flash_attention_2",
+        attn_implementation=attn_impl,
     )
     base_model.resize_token_embeddings(len(tokenizer))
     model = PeftModel.from_pretrained(base_model, args.sft_adapter, is_trainable=True)
@@ -74,8 +77,10 @@ def main() -> None:
     dpo_eval_dataset = eval_dataset.map(format_dpo_dataset)
 
     # 4. DPO Training Function
+    base_run_name = derive_run_name(args.model_id, "dpo")
+
     def train_dpo(beta_val: float, lr_val: float) -> None:
-        run_name = f"olmo2-dpo-beta{beta_val}-lr{lr_val}"
+        run_name = f"{base_run_name}-beta{beta_val}-lr{lr_val}"
         output_dir = f"./{run_name}"
         print(f"\n--- Starting DPO Sweep: Beta={beta_val}, LR={lr_val} ---")
 

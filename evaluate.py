@@ -1,12 +1,12 @@
 """
-evaluate.py -- Automated Evaluation and Red Teaming for OLMo 2 1B
+evaluate.py -- Automated Evaluation and Red Teaming
 
 Runs Phase 5 of the training pipeline: tests the fine-tuned model on
 in-domain prompts (accuracy) and out-of-domain prompts (boundary enforcement).
 Supports optional baseline comparison and LLM-as-judge scoring via GPT-4o.
 
 Usage:
-    python evaluate.py [--adapter ADAPTER_PATH] [--baseline] [--judge]
+    python evaluate.py --model-id <huggingface-model-id> [--adapter ADAPTER_PATH] [--baseline] [--judge]
 
 Requirements:
     pip install -e ".[training]"
@@ -21,8 +21,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
-USER_TAG = "<" + "|user|" + ">"
-ASSISTANT_TAG = "<" + "|assistant|" + ">"
+from model_utils import format_prompt_for_eval
 
 # ──────────────────────────────────────────────
 # LLM-as-Judge
@@ -82,9 +81,9 @@ def judge_response(prompt: str, response: str, test_type: str) -> dict | None:
 # ──────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="OLMo 2 1B Evaluation")
-    parser.add_argument("--model-id", type=str, default="allenai/OLMo-2-0425-1B")
-    parser.add_argument("--adapter", type=str, default="./olmo2-1b-domain-dpo")
+    parser = argparse.ArgumentParser(description="Doctune Evaluation")
+    parser.add_argument("--model-id", type=str, required=True, help="HuggingFace model ID (e.g. meta-llama/Llama-3.1-8B)")
+    parser.add_argument("--adapter", type=str, default="./doctune-dpo")
     parser.add_argument("--baseline", action="store_true", help="Also run inference on the unmodified base model for comparison")
     parser.add_argument("--judge", action="store_true", help="Use GPT-4o as an LLM judge to score responses (requires OPENAI_API_KEY)")
     parser.add_argument("--max-new-tokens", type=int, default=150)
@@ -105,8 +104,8 @@ def load_model(model_id: str, tokenizer, adapter_path: str | None = None):
 
 
 def generate_response(model, tokenizer, prompt_text: str, max_new_tokens: int = 150, temperature: float = 0.1) -> str:
-    """Generates a response using the SFT ChatML formatting."""
-    formatted_prompt = f"{USER_TAG}\n{prompt_text}\n{ASSISTANT_TAG}\n"
+    """Generates a response using the model's chat template."""
+    formatted_prompt = format_prompt_for_eval(tokenizer, prompt_text)
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():

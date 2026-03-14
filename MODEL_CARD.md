@@ -1,13 +1,13 @@
-# Model Card: OLMo 2 1B — Domain-Adapted QA
+# Model Card: Doctune — Domain-Adapted QA
 
 ## Model Details
 
 | Field | Value |
 |---|---|
-| **Model Name** | OLMo 2 1B Domain QA |
-| **Base Model** | [allenai/OLMo-2-0425-1B](https://huggingface.co/allenai/OLMo-2-0425-1B) |
-| **Architecture** | Transformer decoder-only (1B parameters) |
-| **Fine-Tuning Method** | LoRA (r=16, α=32) → SFT + DPO |
+| **Model Name** | Doctune Domain QA |
+| **Base Model** | User-specified (any HuggingFace causal LM) |
+| **Architecture** | Transformer decoder-only |
+| **Fine-Tuning Method** | LoRA (auto-detected targets) → SFT + DPO |
 | **Status** | Pre-training blueprint (not yet executed) |
 | **License** | Apache 2.0 |
 
@@ -16,18 +16,18 @@
 This model is designed for **closed-domain question answering** over technical documentation extracted from PDF manuals. After fine-tuning:
 
 - **Primary Use:** Answering user questions grounded in a specific PDF corpus
-- **Secondary Use:** Demonstrating SFT + DPO alignment methodology on a small (1B) LLM
+- **Secondary Use:** Demonstrating SFT + DPO alignment methodology on any HuggingFace LLM
 - **Out-of-Scope:** General knowledge QA, code generation, creative writing, or any task outside the trained domain
 
 ## Training Methodology
 
 ### Phase 1: Data Synthesis
 - PDF documents are parsed via IBM Docling (layout-aware extraction)
-- GPT-4o Teacher Model generates SFT question-answer pairs and DPO preference tuples
+- Teacher Model (GPT-4o, Claude, or Ollama) generates SFT question-answer pairs and DPO preference tuples
 - Cosine similarity deduplication (threshold > 0.85) enforces dataset diversity
 
 ### Phase 2: SFT (Supervised Fine-Tuning)
-- LoRA adapters targeting all 7 linear projections + `lm_head` + `embed_tokens`
+- LoRA adapters auto-targeting all detected Linear projections + `lm_head` + `embed_tokens`
 - 3 epochs, cosine LR schedule (2e-4), BF16 precision
 - Dedicated `<|pad|>` token (not reusing EOS)
 
@@ -43,8 +43,8 @@ This model is designed for **closed-domain question answering** over technical d
 ## Limitations
 
 - **Domain-locked:** The model will refuse or produce low-quality answers for out-of-domain queries
-- **Synthetic data dependency:** All training data is GPT-4o-generated; no human-curated ground truth exists yet
-- **Scale constraints:** 1B parameters limit complex multi-step reasoning compared to larger models
+- **Synthetic data dependency:** All training data is teacher-model-generated; no human-curated ground truth exists yet
+- **Scale constraints:** Smaller models limit complex multi-step reasoning compared to larger ones
 - **Language:** English only
 
 ## Evaluation
@@ -58,16 +58,16 @@ This model is designed for **closed-domain question answering** over technical d
 ## Ethical Considerations
 
 - The model should **not** be used as a sole source of truth for safety-critical decisions
-- Synthetic training data may contain subtle biases inherited from GPT-4o
+- Synthetic training data may contain subtle biases inherited from the teacher model
 - Users should validate model outputs against original source documentation
 - The DPO alignment enforces boundary behavior but cannot guarantee zero hallucination
 
 ## Citation
 
 ```bibtex
-@misc{olmo2-domain-qa,
-  title={OLMo 2 1B Domain-Adapted QA Pipeline},
+@misc{doctune,
+  title={Doctune: PDF Domain Adaptation Pipeline for HuggingFace LLMs},
   year={2026},
-  url={https://github.com/your-username/olmo}
+  url={https://github.com/your-username/doctune}
 }
 ```

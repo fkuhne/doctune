@@ -1,7 +1,7 @@
 [project]
-name = "olmo-domain-adaptation"
-version = "0.1.0"
-description = "End-to-end pipeline for fine-tuning OLMo 2 1B on any PDF document corpus using SFT + DPO"
+name = "doctune"
+version = "0.2.0"
+description = "End-to-end pipeline for domain-adapting any HuggingFace causal LM on PDF document corpora using SFT + DPO"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -47,5 +47,6 @@ py-modules = [
     "pdf_extractor",
     "evaluate",
     "build_dataset",
-    "deduplicate_dataset"
+    "deduplicate_dataset",
+    "model_utils"
 ]

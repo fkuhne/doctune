@@ -1,11 +1,11 @@
 """
-merge_model.py -- Weight Merging for OLMo 2 1B
+merge_model.py -- Weight Merging for Deployment
 
 Runs Phase 6 (Step 1) of the training pipeline: fuses the DPO-aligned LoRA
 adapters back into the base model to create a standalone binary for deployment.
 
 Usage:
-    python merge_model.py [--adapter ADAPTER_PATH] [--output OUTPUT_DIR]
+    python merge_model.py --model-id <huggingface-model-id> [--adapter ADAPTER_PATH] [--output OUTPUT_DIR]
 
 Requirements:
     pip install -e ".[training]"
@@ -19,10 +19,10 @@ from peft import PeftModel
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="OLMo 2 1B Weight Merging")
-    parser.add_argument("--model-id", type=str, default="allenai/OLMo-2-0425-1B")
-    parser.add_argument("--adapter", type=str, default="./olmo2-1b-domain-dpo")
-    parser.add_argument("--output", type=str, default="./olmo2-1b-domain-merged")
+    parser = argparse.ArgumentParser(description="Doctune Weight Merging")
+    parser.add_argument("--model-id", type=str, required=True, help="HuggingFace model ID (e.g. meta-llama/Llama-3.1-8B)")
+    parser.add_argument("--adapter", type=str, default="./doctune-dpo")
+    parser.add_argument("--output", type=str, default="./doctune-merged")
     return parser.parse_args()
 
 
@@ -56,7 +56,6 @@ def main() -> None:
     merged_model.save_pretrained(args.output)
 
     # 6. Save Tokenizer alongside the merged model
-    # NOTE: See sft_plan.md Phase 6 for the chat_template configuration
     tokenizer.save_pretrained(args.output)
 
     print("Merge Complete. Model is ready for production inference.")

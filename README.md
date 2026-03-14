@@ -1,6 +1,6 @@
-# 🔬 OLMo 2 1B — PDF Domain Adaptation Pipeline
+# 🔬 Doctune — PDF Domain Adaptation Pipeline
 
-> End-to-end blueprint for fine-tuning [OLMo 2 1B](https://huggingface.co/allenai/OLMo-2-0425-1B) on any PDF document corpus using SFT + DPO
+> End-to-end blueprint for domain-adapting **any HuggingFace causal LM** on PDF document corpora using SFT + DPO
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-≥3.10-green.svg)](https://python.org)
@@ -38,7 +38,7 @@ curl -fsSL https://ollama.com/install.sh | sh   # Linux
 ollama pull llama3.1:8b
 
 # 3. Clone the repo and set up
-git clone <your-repo-url> && cd olmo
+git clone <your-repo-url> && cd doctune
 uv venv .venv && source .venv/bin/activate
 uv pip install -e "."
 
@@ -55,7 +55,7 @@ Higher quality synthetic data using cloud APIs:
 
 ```bash
 # 1. Clone the repo
-git clone <your-repo-url> && cd olmo
+git clone <your-repo-url> && cd doctune
 
 # 2. Install uv (if you don't have it already)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -90,13 +90,15 @@ export OPENAI_API_KEY="your_key_here"   # or ANTHROPIC_API_KEY
 python build_dataset.py                  # --model claude-3-5-sonnet-20241022 for Anthropic
 
 # 3. Train (SFT → DPO → Evaluate → Merge)
-python train_sft.py
-python train_dpo.py
-python evaluate.py
-python merge_model.py
+#    Replace <your-model-id> with any HuggingFace model
+#    Examples: meta-llama/Llama-3.1-8B, mistralai/Mistral-7B-v0.3, allenai/OLMo-2-0425-1B
+python train_sft.py   --model-id <your-model-id>
+python train_dpo.py   --model-id <your-model-id>
+python evaluate.py    --model-id <your-model-id>
+python merge_model.py --model-id <your-model-id>
 ```
 
-**Hardware Requirements (Phases 3–6):** ≥ 24 GB VRAM (A100, RTX 3090/4090, or RTX 6000 Ada). If no Ampere GPU is available, use FP16 instead of BF16 and disable Flash Attention 2.
+**Hardware Requirements (Phases 3–6):** ≥ 24 GB VRAM (A100, RTX 3090/4090, or RTX 6000 Ada). Flash Attention 2 is auto-detected — if unavailable, the pipeline falls back to eager attention automatically.
 
 ---
 
@@ -121,7 +123,7 @@ python merge_model.py
  📊 alignment_dataset.jsonl
        │
        ▼
- 🎓 SFT Training (LoRA r=16, α=32)
+ 🎓 SFT Training (LoRA — auto-detected target modules)
        │
        ▼
  ⚖️  DPO Alignment (β sweep)
@@ -135,12 +137,13 @@ python merge_model.py
 ## 📁 Repository Structure
 
 ```
-olmo/
+doctune/
 ├── README.md                       # This file
 ├── MODEL_CARD.md                   # Model card (intended use, method, limitations)
 ├── DATA_CARD.md                    # Dataset card (schema, source guidance, quality)
 ├── sft_plan.md                     # Master Execution Blueprint (Phases 1–6)
 ├── data_engineering_spec.md        # Data pipeline theoretical framework
+├── model_utils.py                  # Model-agnostic utilities (LoRA target detection, etc.)
 ├── build_dataset.py                # Phase 2 orchestrator — runs the full data pipeline
 ├── pdf_extractor.py                # PDF ingestion via IBM Docling
 ├── teacher_model_synthesis.py      # GPT-4o synthetic QA generation
@@ -189,10 +192,10 @@ These modular Python scripts handle the conversion of raw PDFs into a training-r
 
 | Parameter | SFT | DPO |
 |---|---|---|
-| Base Model | `allenai/OLMo-2-0425-1B` | Post-SFT adapter |
+| Base Model | User-specified via `--model-id` | Post-SFT adapter |
 | LoRA Rank (r) | 16 | — (reuses SFT adapters) |
 | LoRA Alpha (α) | 32 | — |
-| Target Modules | All 7 linear projections + `lm_head`, `embed_tokens` | — |
+| Target Modules | Auto-detected from model architecture | — |
 | Learning Rate | 2e-4 | Sweep: [5e-6, 1e-6] |
 | Scheduler | Cosine (warmup 10%) | Cosine (warmup 10%) |
 | Epochs | 3 | 1 |
@@ -200,6 +203,8 @@ These modular Python scripts handle the conversion of raw PDFs into a training-r
 | Precision | BF16 | BF16 |
 | DPO β | — | Sweep: [0.1, 0.25] |
 | Experiment Tracking | MLflow | MLflow |
+
+> **Note:** LoRA target modules are auto-detected from the model architecture at runtime, so the pipeline works with any HuggingFace causal LM (LLaMA, Mistral, Phi, Gemma, Qwen, OLMo, etc.).
 
 ---
 
@@ -230,13 +235,20 @@ See Phase 5 in `sft_plan.md` for the full evaluation script.
 
 ### Steps 1–3: Data Curation (can run locally — no GPU)
 1. Run `bash local_setup.sh` (or `pip install -e "."` manually).
-2. Export the OpenAI API key: `export OPENAI_API_KEY="your_key_here"`.
+2. Export your API key: `export OPENAI_API_KEY="your_key_here"`.
 3. Place your target PDFs in `./manuals/` and run `python build_dataset.py`.
 
 ### Steps 4–6: Training & Deployment (GPU required)
 4. Connect to the GPU pod and run `bash runpod_setup.sh`.
 5. Transfer `alignment_dataset.jsonl` and `golden_eval.jsonl` to the pod (if generated locally).
-6. Follow the Python scripts in `sft_plan.md` for Phase 3 (SFT), Phase 4 (DPO), Phase 5 (Eval), and Phase 6 (Merge).
+6. Run the training pipeline with your chosen model:
+   ```bash
+   export MODEL_ID="meta-llama/Llama-3.1-8B"  # or any HuggingFace model
+   python train_sft.py   --model-id $MODEL_ID
+   python train_dpo.py   --model-id $MODEL_ID
+   python evaluate.py    --model-id $MODEL_ID
+   python merge_model.py --model-id $MODEL_ID
+   ```
 
 ---
 
