@@ -53,7 +53,5 @@ py-modules = [
     "provider_utils"
 ]
 
-[tool.uv]
-extra-build-dependencies = [
-    "torch",
-]
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]
