@@ -18,7 +18,7 @@ local-setup: ## Set up local environment for Phase 2 data generation (no GPU)
 # ──────────────────────────────────────────────
 
 data: ## Generate the training dataset from PDFs in ./manuals/ (no GPU)
-	python -m doctune.data.build_dataset
+	python -m doctune.data.pipeline.build_dataset
 
 # ──────────────────────────────────────────────
 # Training (Phases 3–4) — GPU required

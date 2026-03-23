@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from doctune.data.pipeline_utils import (
+from doctune.data.pipeline.pipeline_utils import (
     add_common_cli_args,
     add_extraction_cli_args,
     discover_pdfs,

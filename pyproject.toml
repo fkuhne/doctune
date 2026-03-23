@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "End-to-end pipeline for domain-adapting any HuggingFace causal LM on PDF document corpora using SFT + DPO"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "Felipe Kuhne" },
 ]

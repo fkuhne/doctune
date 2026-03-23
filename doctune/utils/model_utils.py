@@ -49,14 +49,14 @@ def detect_lora_target_modules(model: nn.Module) -> list[str]:
         return ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
     detected = sorted(target_modules)
-    print(f"Auto-detected LoRA target modules: {detected}")
+    logger.info("Auto-detected LoRA target modules: %s", detected)
     return detected
 
 
 # ==============================================================================
 # Attention Implementation Detection
 # ==============================================================================
-def detect_attn_implementation() -> str:
+def _detect_attn_implementation() -> str:
     """Return the best available attention implementation.
 
     Returns:
@@ -66,10 +66,10 @@ def detect_attn_implementation() -> str:
     try:
         # pylint: disable=import-outside-toplevel,unused-import
         import flash_attn  # noqa: F401
-        print("Flash Attention 2 detected — using flash_attention_2.")
+        logger.info("Flash Attention 2 detected — using flash_attention_2.")
         return "flash_attention_2"
     except ImportError:
-        print("Flash Attention 2 not available — using eager attention.")
+        logger.info("Flash Attention 2 not available — using eager attention.")
         return "eager"
 
 
@@ -120,7 +120,7 @@ def load_base_model(
         A loaded ``AutoModelForCausalLM`` with embeddings resized to match
         the tokenizer vocabulary.
     """
-    attn_impl = detect_attn_implementation()
+    attn_impl = _detect_attn_implementation()
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         torch_dtype=torch_dtype,
@@ -180,16 +180,16 @@ def derive_run_name(model_id: str, stage: str) -> str:
 
 
 # ==============================================================================
-# Memory Cleanup
+# GPU Memory Cleanup
 # ==============================================================================
-def cleanup_memory(*objects: object) -> None:
-    """Delete objects and free GPU memory if available.
+def clear_gpu_cache() -> None:
+    """Free GPU memory if a CUDA device is available.
 
-    Args:
-        *objects: Any Python objects to delete (models, trainers, etc.).
+    Callers are responsible for deleting their own references to large
+    objects (models, trainers, etc.) *before* calling this function so
+    that the reference counts drop to zero and the memory can actually
+    be reclaimed.
     """
-    for obj in objects:
-        del obj
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        print("GPU memory cache cleared.")
+        logger.info("GPU memory cache cleared.")

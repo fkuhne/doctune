@@ -46,6 +46,22 @@ class DPOResponse(BaseModel):
 
 
 # ==============================================================================
+# JSON-mode instruction fragments (shared by Anthropic & Ollama)
+# ==============================================================================
+_SFT_JSON_INSTRUCTION = (
+    "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
+    '{"qa_pairs": [{"prompt": "...", "chosen": "..."}]}\n'
+    "Do not include any text outside the JSON object."
+)
+
+_DPO_JSON_INSTRUCTION = (
+    "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
+    '{"rejected": "..."}\n'
+    "Do not include any text outside the JSON object."
+)
+
+
+# ==============================================================================
 # Synthetic Data Generator Class
 # ==============================================================================
 
@@ -64,7 +80,7 @@ class TeacherModelSynthesizer:
         ollama_base_url: Custom Ollama server URL.
     """
 
-    def __init__( # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         domain: str = "technical documentation",
         api_key: str | None = None,
@@ -76,6 +92,10 @@ class TeacherModelSynthesizer:
         self.provider = provider or detect_provider(model)
         self.domain = domain
 
+        logger.info(
+            "Initializing Teacher Model Synthesizer (%s:%s) for domain: '%s'",
+            self.provider, self.model, domain,
+        )
         print(
             f"Initializing Teacher Model Synthesizer "
             f"({self.provider}:{self.model}) for domain: '{domain}'..."
@@ -129,22 +149,13 @@ class TeacherModelSynthesizer:
         return response.output_parsed.rejected
 
     # --------------------------------------------------------------------------
-    # Anthropic implementation (JSON mode with manual Pydantic parsing)
+    # JSON-mode implementation (shared by Anthropic & Ollama)
     # --------------------------------------------------------------------------
     @retry_on_rate_limit()
-    def _anthropic_call(
-        self, system_prompt: str, user_prompt: str, temperature: float = 0.3
+    def _anthropic_raw_call(
+        self, system_prompt: str, user_prompt: str, temperature: float,
     ) -> str:
-        """Make an Anthropic API call and return the text content.
-
-        Args:
-            system_prompt: System instructions.
-            user_prompt: User message content.
-            temperature: Sampling temperature.
-
-        Returns:
-            Raw text response from the model.
-        """
+        """Make a raw Anthropic API call and return the text content."""
         response = self.client.messages.create(
             model=self.model,
             max_tokens=4096,
@@ -154,43 +165,11 @@ class TeacherModelSynthesizer:
         )
         return response.content[0].text
 
-    def _anthropic_generate_sft(self, system_prompt: str, user_prompt: str) -> list[dict]:
-        """Generate SFT pairs via Anthropic JSON mode."""
-        json_instruction = (
-            "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
-            '{"qa_pairs": [{"prompt": "...", "chosen": "..."}]}\n'
-            "Do not include any text outside the JSON object."
-        )
-        raw = self._anthropic_call(system_prompt + json_instruction, user_prompt, temperature=0.3)
-        parsed = SFTResponse.model_validate_json(raw)
-        return [pair.model_dump() for pair in parsed.qa_pairs]
-
-    def _anthropic_generate_dpo(self, system_prompt: str, user_prompt: str) -> str | None:
-        """Generate a DPO rejected response via Anthropic JSON mode."""
-        json_instruction = (
-            "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
-            '{"rejected": "..."}\n'
-            "Do not include any text outside the JSON object."
-        )
-        raw = self._anthropic_call(system_prompt + json_instruction, user_prompt, temperature=0.5)
-        parsed = DPOResponse.model_validate_json(raw)
-        return parsed.rejected
-
-    # --------------------------------------------------------------------------
-    # Ollama implementation (OpenAI-compatible API with JSON mode)
-    # --------------------------------------------------------------------------
     @retry_on_rate_limit()
-    def _ollama_call(self, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
-        """Make an Ollama API call via the OpenAI-compatible endpoint.
-
-        Args:
-            system_prompt: System instructions.
-            user_prompt: User message content.
-            temperature: Sampling temperature.
-
-        Returns:
-            Raw text response from the model.
-        """
+    def _ollama_raw_call(
+        self, system_prompt: str, user_prompt: str, temperature: float,
+    ) -> str:
+        """Make a raw Ollama API call via the OpenAI-compatible endpoint."""
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -202,25 +181,40 @@ class TeacherModelSynthesizer:
         )
         return response.choices[0].message.content
 
-    def _ollama_generate_sft(self, system_prompt: str, user_prompt: str) -> list[dict]:
-        """Generate SFT pairs via Ollama JSON mode."""
-        json_instruction = (
-            "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
-            '{"qa_pairs": [{"prompt": "...", "chosen": "..."}]}\n'
-            "Do not include any text outside the JSON object."
+    def _json_mode_call(
+        self, system_prompt: str, user_prompt: str, temperature: float = 0.3,
+    ) -> str:
+        """Dispatch a JSON-mode API call to the appropriate non-OpenAI provider.
+
+        Args:
+            system_prompt: System instructions (JSON instruction already appended).
+            user_prompt: User message content.
+            temperature: Sampling temperature.
+
+        Returns:
+            Raw JSON text response from the model.
+        """
+        if self.provider == "anthropic":
+            return self._anthropic_raw_call(system_prompt, user_prompt, temperature)
+        return self._ollama_raw_call(system_prompt, user_prompt, temperature)
+
+    def _json_mode_generate_sft(
+        self, system_prompt: str, user_prompt: str,
+    ) -> list[dict]:
+        """Generate SFT pairs via JSON mode (Anthropic or Ollama)."""
+        raw = self._json_mode_call(
+            system_prompt + _SFT_JSON_INSTRUCTION, user_prompt, temperature=0.3,
         )
-        raw = self._ollama_call(system_prompt + json_instruction, user_prompt, temperature=0.3)
         parsed = SFTResponse.model_validate_json(raw)
         return [pair.model_dump() for pair in parsed.qa_pairs]
 
-    def _ollama_generate_dpo(self, system_prompt: str, user_prompt: str) -> str | None:
-        """Generate a DPO rejected response via Ollama JSON mode."""
-        json_instruction = (
-            "\n\nYou MUST respond with valid JSON only, matching this exact schema:\n"
-            '{"rejected": "..."}\n'
-            "Do not include any text outside the JSON object."
+    def _json_mode_generate_dpo(
+        self, system_prompt: str, user_prompt: str,
+    ) -> str | None:
+        """Generate a DPO rejected response via JSON mode (Anthropic or Ollama)."""
+        raw = self._json_mode_call(
+            system_prompt + _DPO_JSON_INSTRUCTION, user_prompt, temperature=0.5,
         )
-        raw = self._ollama_call(system_prompt + json_instruction, user_prompt, temperature=0.5)
         parsed = DPOResponse.model_validate_json(raw)
         return parsed.rejected
 
@@ -255,18 +249,19 @@ class TeacherModelSynthesizer:
             'Generate 2 to 3 Question-Answer pairs.'
         )
 
+        generate = (
+            self._openai_generate_sft
+            if self.provider == "openai"
+            else self._json_mode_generate_sft
+        )
+
         try:
-            if self.provider == "openai":
-                return self._openai_generate_sft(system_prompt, user_prompt)
-            if self.provider == "anthropic":
-                return self._anthropic_generate_sft(system_prompt, user_prompt)
-            return self._ollama_generate_sft(system_prompt, user_prompt)
+            return generate(system_prompt, user_prompt)
         except json.JSONDecodeError as e:
             logger.warning("SFT generation returned invalid JSON: %s", e)
             return []
-        except Exception as e: # pylint: disable=broad-exception-caught
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("SFT Generation Error: %s", e)
-            print(f"SFT Generation Error: {e}")
             return []
 
     def generate_dpo_rejection(self, prompt: str, chosen: str) -> str | None:
@@ -294,18 +289,19 @@ class TeacherModelSynthesizer:
             "Generate the plausible but factually incorrect 'rejected' response."
         )
 
+        generate = (
+            self._openai_generate_dpo
+            if self.provider == "openai"
+            else self._json_mode_generate_dpo
+        )
+
         try:
-            if self.provider == "openai":
-                return self._openai_generate_dpo(system_prompt, user_prompt)
-            if self.provider == "anthropic":
-                return self._anthropic_generate_dpo(system_prompt, user_prompt)
-            return self._ollama_generate_dpo(system_prompt, user_prompt)
+            return generate(system_prompt, user_prompt)
         except json.JSONDecodeError as e:
             logger.warning("DPO generation returned invalid JSON: %s", e)
             return None
-        except Exception as e: # pylint: disable=broad-exception-caught
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("DPO Generation Error: %s", e)
-            print(f"DPO Generation Error: {e}")
             return None
 
     def process_chunk(self, markdown_chunk: str) -> list[dict]:
@@ -318,12 +314,11 @@ class TeacherModelSynthesizer:
             List of complete tuples with ``"prompt"``, ``"chosen"``, and
             ``"rejected"`` keys.
         """
-        final_tuples: list[dict] = []
-
         sft_pairs = self.generate_sft_pairs(markdown_chunk)
         if not sft_pairs:
-            return final_tuples
+            return []
 
+        final_tuples: list[dict] = []
         for pair in sft_pairs:
             rejected_text = self.generate_dpo_rejection(pair["prompt"], pair["chosen"])
             if rejected_text:

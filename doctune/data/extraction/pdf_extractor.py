@@ -24,6 +24,41 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
     document's internal heading hierarchy.
     """
 
+    # ------------------------------------------------------------------
+    # Helpers: logging & environment
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_env_numeric(
+        var_name: str,
+        default: int | float,
+        cast: type = int,
+        min_value: int | float = 0,
+    ) -> int | float:
+        """Read a numeric value from an environment variable with safe fallback."""
+        raw = os.getenv(var_name, str(default))
+        try:
+            return max(min_value, cast(raw))
+        except ValueError:
+            logger.warning("Invalid %s=%r. Using default %s.", var_name, raw, default)
+            return default
+
+    @staticmethod
+    def _log_error(msg: str, *fmt_args: Any) -> None:
+        """Log an error and echo it to stdout."""
+        logger.error(msg, *fmt_args)
+        print(f"ERROR: {msg % fmt_args}")
+
+    @staticmethod
+    def _log_warning(msg: str, *fmt_args: Any) -> None:
+        """Log a warning and echo it to stdout."""
+        logger.warning(msg, *fmt_args)
+        print(f"  [WARN] {msg % fmt_args}")
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
     def __init__(self, page_batch_size: int | None = None) -> None:
         """Initialize the Docling converter and hierarchical chunker."""
         # pylint: disable=import-outside-toplevel
@@ -46,39 +81,21 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         self.converter = self._build_converter()
         self._suppress_rapidocr_logs()
         self.chunker = HierarchicalChunker()
+
         # Process large PDFs in bounded page windows to reduce native-memory spikes.
-        if page_batch_size is not None:
-            self.page_batch_size = max(1, page_batch_size)
-        else:
-            env_val = os.getenv("DOCTUNE_DOCLING_PAGE_BATCH_SIZE", "25")
-            try:
-                self.page_batch_size = max(1, int(env_val))
-            except ValueError:
-                logger.warning(
-                    "Invalid DOCTUNE_DOCLING_PAGE_BATCH_SIZE=%r. Using default 25.",
-                    env_val,
-                )
-                self.page_batch_size = 25
-
-        retry_env = os.getenv("DOCTUNE_DOCLING_RETRY_ATTEMPTS", "3")
-        backoff_env = os.getenv("DOCTUNE_DOCLING_RETRY_BACKOFF_SECONDS", "1.0")
-        try:
-            self.retry_attempts = max(1, int(retry_env))
-        except ValueError:
-            logger.warning(
-                "Invalid DOCTUNE_DOCLING_RETRY_ATTEMPTS=%r. Using default 3.",
-                retry_env,
-            )
-            self.retry_attempts = 3
-
-        try:
-            self.retry_backoff_seconds = max(0.0, float(backoff_env))
-        except ValueError:
-            logger.warning(
-                "Invalid DOCTUNE_DOCLING_RETRY_BACKOFF_SECONDS=%r. Using default 1.0.",
-                backoff_env,
-            )
-            self.retry_backoff_seconds = 1.0
+        self.page_batch_size = (
+            max(1, page_batch_size)
+            if page_batch_size is not None
+            else int(self._get_env_numeric(
+                "DOCTUNE_DOCLING_PAGE_BATCH_SIZE", 25, int, 1,
+            ))
+        )
+        self.retry_attempts = int(self._get_env_numeric(
+            "DOCTUNE_DOCLING_RETRY_ATTEMPTS", 3, int, 1,
+        ))
+        self.retry_backoff_seconds = float(self._get_env_numeric(
+            "DOCTUNE_DOCLING_RETRY_BACKOFF_SECONDS", 1.0, float, 0.0,
+        ))
 
     def _resolve_docling_device(self) -> str:
         """Resolve OCR device preference with safe GPU-to-CPU fallback."""
@@ -87,36 +104,34 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         if pref in {"0", "false", "no", "cpu"}:
             return "cpu"
 
-        if pref in {"1", "true", "yes", "gpu"}:
+        # Normalise common GPU aliases to a canonical CUDA string.
+        _GPU_ALIASES = {"1", "true", "yes", "gpu", "cuda"}  # noqa: N806
+        if pref in _GPU_ALIASES:
             pref = "cuda:0"
 
+        # Detect CUDA availability once.
         try:
-            import torch
+            import torch  # pylint: disable=import-outside-toplevel
 
-            has_cuda = bool(torch.cuda.is_available())
-            device_count = int(torch.cuda.device_count()) if has_cuda else 0
-        except Exception as e: # pylint: disable=broad-exception-caught
-            logger.warning("Could not inspect CUDA availability: %s", e)
-            has_cuda = False
-            device_count = 0
+            has_cuda = torch.cuda.is_available()
+            device_count = torch.cuda.device_count() if has_cuda else 0
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Could not inspect CUDA availability: %s", exc)
+            has_cuda, device_count = False, 0
 
-        if pref.startswith("cuda"):
-            if has_cuda:
-                if pref == "cuda":
-                    return "cuda:0"
-                if ":" in pref:
-                    suffix = pref.split(":", maxsplit=1)[1]
-                    if suffix.isdigit() and int(suffix) < device_count:
-                        return pref
-                    logger.warning(
-                        "Requested %s but only %d CUDA device(s) are visible. "
-                        "Falling back to cpu.",
-                        pref,
-                        device_count,
-                    )
-                    return "cpu"
-                return "cuda:0"
+        auto_device = "cuda:0" if has_cuda else "cpu"
 
+        if not pref.startswith("cuda"):
+            if pref != "auto":
+                logger.warning(
+                    "Unknown DOCTUNE_DOCLING_USE_GPU value %r. "
+                    "Using auto device selection.",
+                    pref,
+                )
+            return auto_device
+
+        # pref starts with "cuda" — validate it.
+        if not has_cuda:
             logger.warning(
                 "CUDA was requested via DOCTUNE_DOCLING_USE_GPU=%s but is not "
                 "available in this Python environment. Falling back to cpu.",
@@ -124,14 +139,20 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
             )
             return "cpu"
 
-        if pref == "auto":
-            return "cuda:0" if has_cuda else "cpu"
+        # Validate device index (e.g. 'cuda:1').
+        if ":" in pref:
+            idx = pref.split(":", maxsplit=1)[1]
+            if idx.isdigit() and int(idx) < device_count:
+                return pref
+            logger.warning(
+                "Requested %s but only %d CUDA device(s) are visible. "
+                "Falling back to cpu.",
+                pref,
+                device_count,
+            )
+            return "cpu"
 
-        logger.warning(
-            "Unknown DOCTUNE_DOCLING_USE_GPU value %r. Using auto device selection.",
-            pref,
-        )
-        return "cuda:0" if has_cuda else "cpu"
+        return "cuda:0"
 
     def _build_converter(self) -> Any:
         """Build Docling converter with explicit RapidOCR torch backend settings."""
@@ -158,24 +179,22 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         print(f"  Docling OCR device: {device} (RapidOCR backend: torch)")
         return converter
 
-    def _suppress_rapidocr_logs(self) -> None:
+    @staticmethod
+    def _suppress_rapidocr_logs() -> None:
         """Mute verbose RapidOCR informational logs across logger variants."""
-        candidate_names = ["RapidOCR", "rapidocr"]
-        for logger_name in candidate_names:
-            log_obj = logging.getLogger(logger_name)
+        def _silence(log_obj: logging.Logger) -> None:
             log_obj.setLevel(logging.ERROR)
             log_obj.propagate = False
             log_obj.disabled = True
 
-        # Some RapidOCR builds create module-specific logger names; disable those too.
-        for logger_name, logger_obj in logging.root.manager.loggerDict.items():
-            if "rapidocr" not in logger_name.lower():
-                continue
-            if not isinstance(logger_obj, logging.Logger):
-                continue
-            logger_obj.setLevel(logging.ERROR)
-            logger_obj.propagate = False
-            logger_obj.disabled = True
+        # Silence the two well-known logger names first (creates them if needed).
+        for name in ("RapidOCR", "rapidocr"):
+            _silence(logging.getLogger(name))
+
+        # Catch any module-specific loggers created by RapidOCR at import time.
+        for name, obj in logging.root.manager.loggerDict.items():
+            if "rapidocr" in name.lower() and isinstance(obj, logging.Logger):
+                _silence(obj)
 
     def _reset_converter(self, reason: str) -> None:
         """Reinitialize Docling converter to recover from native pipeline failures."""
@@ -266,16 +285,12 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                     time.sleep(sleep_for)
 
         if start_page == end_page:
-            logger.warning(
+            self._log_warning(
                 "Skipping page %d in %s after %d attempts (%s)",
                 start_page,
                 pdf_path,
                 self.retry_attempts,
                 last_error_label or "unknown failure",
-            )
-            print(
-                f"  [WARN] Skipping failing page {start_page} "
-                f"after {self.retry_attempts} attempts ({last_error_label or 'failure'})"
             )
             return []
 
@@ -320,8 +335,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         """
         # Validate file existence before calling Docling
         if not os.path.exists(pdf_path):
-            logger.error("PDF not found: %s", pdf_path)
-            print(f"ERROR: PDF not found: {pdf_path}")
+            self._log_error("PDF not found: %s", pdf_path)
             return []
 
         if not pdf_path.lower().endswith(".pdf"):
@@ -340,15 +354,13 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                     self.converter.convert(pdf_path, raises_on_error=False)
                 ]
             except PermissionError:
-                logger.error("Permission denied reading PDF: %s", pdf_path)
-                print(f"ERROR: Permission denied reading PDF: {pdf_path}")
+                self._log_error("Permission denied reading PDF: %s", pdf_path)
                 return []
             except Exception as e: # pylint: disable=broad-exception-caught
-                logger.error(
+                self._log_error(
                     "PDF parsing failed for %s: %s: %s",
                     pdf_path, type(e).__name__, e,
                 )
-                print(f"ERROR: PDF parsing failed for {pdf_path}: {type(e).__name__}: {e}")
                 return []
         else:
             conversion_results: list[Any] = []
@@ -366,15 +378,13 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                         end_page,
                     )
                 except PermissionError:
-                    logger.error("Permission denied reading PDF: %s", pdf_path)
-                    print(f"ERROR: Permission denied reading PDF: {pdf_path}")
+                    self._log_error("Permission denied reading PDF: %s", pdf_path)
                     return []
 
                 conversion_results.extend(range_results)
 
             if not conversion_results:
-                logger.error("No pages could be converted for %s", pdf_path)
-                print(f"ERROR: No pages could be converted for {pdf_path}")
+                self._log_error("No pages could be converted for %s", pdf_path)
                 return []
 
         # 2. Semantic Chunking + 3. Metadata Injection & Filtering

@@ -16,18 +16,24 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import logging
 
-from datasets import load_dataset
-from transformers import TrainingArguments
 from peft import PeftModel
 from trl import DPOTrainer
 
-from doctune.utils.model_utils import (
-    derive_run_name,
-    load_tokenizer,
-    load_base_model,
-    cleanup_memory,
+from doctune.training.training_utils import (
+    add_common_train_args,
+    build_training_args,
+    load_datasets,
 )
+from doctune.utils.model_utils import (
+    clear_gpu_cache,
+    derive_run_name,
+    load_base_model,
+    load_tokenizer,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,46 +43,39 @@ def parse_args() -> argparse.Namespace:
         Parsed argument namespace.
     """
     parser = argparse.ArgumentParser(description="Doctune DPO Training")
-    parser.add_argument(
-        "--model-id", type=str, required=True,
-        help="HuggingFace model ID (e.g. meta-llama/Llama-3.1-8B)",
-    )
+    add_common_train_args(parser)
     parser.add_argument("--sft-adapter", type=str, default="./doctune-sft")
-    parser.add_argument("--dataset", type=str, default="alignment_dataset.jsonl")
-    parser.add_argument("--eval-dataset", type=str, default="golden_eval.jsonl")
-    parser.add_argument("--output", type=str, default="./doctune-dpo")
     parser.add_argument(
-        "--betas", type=float, nargs="+", default=[0.1, 0.25], 
-        help="DPO beta values to sweep"
+        "--betas", type=float, nargs="+", default=[0.1, 0.25],
+        help="DPO beta values to sweep",
     )
     parser.add_argument(
-        "--lrs", type=float, nargs="+", default=[5e-6, 1e-6], 
-        help="Learning rates to sweep"
+        "--lrs", type=float, nargs="+", default=[5e-6, 1e-6],
+        help="Learning rates to sweep",
     )
     return parser.parse_args()
 
 
-def main() -> None: # pylint: disable=too-many-locals
+def main() -> None:
     """Entry point for DPO training with hyperparameter sweep."""
     args = parse_args()
 
-    # 1. Load Tokenizer & Base Model via centralized helpers
+    # 1. Load Tokenizer & Base Model
     tokenizer = load_tokenizer(args.model_id, padding_side="right")
     base_model = load_base_model(args.model_id, tokenizer)
 
     # 2. Load SFT Adapters
-    print(f"Loading SFT Adapters from {args.sft_adapter}...")
+    logger.info("Loading SFT Adapters from %s...", args.sft_adapter)
     model = PeftModel.from_pretrained(base_model, args.sft_adapter, is_trainable=True)
 
     # 3. Load and Format Datasets
-    dataset = load_dataset("json", data_files=args.dataset, split="train")
-    eval_dataset = load_dataset("json", data_files=args.eval_dataset, split="train")
+    dataset, eval_dataset = load_datasets(args.dataset, args.eval_dataset)
 
     def format_dpo_dataset(example: dict) -> dict:
         """Format a single row for DPOTrainer (prompt, chosen, rejected strings)."""
         prompt_messages = [{"role": "user", "content": example["prompt"]}]
         formatted_prompt = tokenizer.apply_chat_template(
-            prompt_messages, tokenize=False, add_generation_prompt=True
+            prompt_messages, tokenize=False, add_generation_prompt=True,
         )
         return {
             "prompt": formatted_prompt,
@@ -94,25 +93,14 @@ def main() -> None: # pylint: disable=too-many-locals
         for lr_val in args.lrs:
             run_name = f"{base_run_name}-beta{beta_val}-lr{lr_val}"
             output_dir = f"./{run_name}"
-            print(f"\n--- Starting DPO Sweep: Beta={beta_val}, LR={lr_val} ---")
+            logger.info("Starting DPO Sweep: Beta=%s, LR=%s", beta_val, lr_val)
 
-            training_args = TrainingArguments(
+            training_args = build_training_args(
                 output_dir=output_dir,
                 run_name=run_name,
-                report_to="mlflow",
-                num_train_epochs=1,
-                per_device_train_batch_size=2,
-                gradient_accumulation_steps=16,
-                gradient_checkpointing=True,
-                optim="adamw_torch",
-                learning_rate=lr_val,
-                lr_scheduler_type="cosine",
-                warmup_ratio=0.1,
-                logging_steps=10,
-                save_strategy="epoch",
-                eval_strategy="epoch", # Changed from evaluation_strategy
-                bf16=True,
-                max_grad_norm=0.3,
+                batch_size=2,
+                grad_accum=16,
+                lr=lr_val,
                 remove_unused_columns=False,
             )
 
@@ -125,20 +113,22 @@ def main() -> None: # pylint: disable=too-many-locals
                 eval_dataset=dpo_eval_dataset,
                 tokenizer=tokenizer,
                 beta=beta_val,
-                max_length=2048,
+                max_length=args.max_seq_length,
                 max_prompt_length=1024,
             )
 
-            print(f"Initiating DPO Training for {run_name}...")
+            logger.info("Initiating DPO Training for %s...", run_name)
             trainer.train()
             trainer.save_model(output_dir)
-            print(f"Alignment complete for {run_name}. Saved to {output_dir}")
+            logger.info("Alignment complete for %s. Saved to %s", run_name, output_dir)
 
             # Free trainer memory between sweeps
-            cleanup_memory(trainer)
+            del trainer
+            clear_gpu_cache()
 
     # Final cleanup
-    cleanup_memory(model, base_model)
+    del model, base_model
+    clear_gpu_cache()
 
 
 if __name__ == "__main__":

@@ -14,19 +14,25 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import logging
 
-from datasets import load_dataset
-from transformers import TrainingArguments
 from peft import LoraConfig, TaskType
 from trl import SFTTrainer
 
-from doctune.utils.model_utils import (
-    detect_lora_target_modules,
-    derive_run_name,
-    load_tokenizer,
-    load_base_model,
-    cleanup_memory,
+from doctune.training.training_utils import (
+    add_common_train_args,
+    build_training_args,
+    load_datasets,
 )
+from doctune.utils.model_utils import (
+    clear_gpu_cache,
+    derive_run_name,
+    detect_lora_target_modules,
+    load_base_model,
+    load_tokenizer,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,18 +42,13 @@ def parse_args() -> argparse.Namespace:
         Parsed argument namespace.
     """
     parser = argparse.ArgumentParser(description="Doctune SFT Training")
-    parser.add_argument(
-        "--model-id", type=str, required=True,
-        help="HuggingFace model ID (e.g. meta-llama/Llama-3.1-8B)",
-    )
-    parser.add_argument("--dataset", type=str, default="alignment_dataset.jsonl")
-    parser.add_argument("--eval-dataset", type=str, default="golden_eval.jsonl")
-    parser.add_argument("--output", type=str, default="./doctune-sft")
+    add_common_train_args(parser)
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=4, help="Per-device train batch size")
-    parser.add_argument("--grad-accum", type=int, default=8, help="Gradient accumulation steps")
+    parser.add_argument("--batch-size", type=int, default=4,
+                        help="Per-device train batch size")
+    parser.add_argument("--grad-accum", type=int, default=8,
+                        help="Gradient accumulation steps")
     parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--max-seq-length", type=int, default=2048)
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     return parser.parse_args()
@@ -57,7 +58,7 @@ def main() -> None:
     """Entry point for SFT training."""
     args = parse_args()
 
-    # 1. Load Tokenizer & Model via centralized helpers
+    # 1. Load Tokenizer & Model
     tokenizer = load_tokenizer(args.model_id, padding_side="right")
     model = load_base_model(args.model_id, tokenizer)
 
@@ -74,16 +75,15 @@ def main() -> None:
     )
 
     # 3. Load and Format Dataset
-    dataset = load_dataset("json", data_files=args.dataset, split="train")
-    eval_dataset = load_dataset("json", data_files=args.eval_dataset, split="train")
+    dataset, eval_dataset = load_datasets(args.dataset, args.eval_dataset)
 
     def formatting_prompts_func(example: dict) -> list[str]:
-        """Convert JSON rows into conversational strings via the model's chat template."""
+        """Convert JSON rows into conversational strings via the chat template."""
         output_texts: list[str] = []
-        for i in range(len(example["prompt"])):
+        for prompt, chosen in zip(example["prompt"], example["chosen"]):
             messages = [
-                {"role": "user", "content": example["prompt"][i]},
-                {"role": "assistant", "content": example["chosen"][i]},
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": chosen},
             ]
             text = tokenizer.apply_chat_template(messages, tokenize=False)
             output_texts.append(text)
@@ -91,29 +91,18 @@ def main() -> None:
 
     # 4. Training Arguments
     run_name = derive_run_name(args.model_id, "sft")
-    # pylint: disable=duplicate-code
-    training_args = TrainingArguments(
-        output_dir=args.output,
+    output_dir = args.output or "./doctune-sft"
+    training_args = build_training_args(
+        output_dir=output_dir,
         run_name=run_name,
-        report_to="mlflow",
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        gradient_checkpointing=True,
-        optim="adamw_torch",
-        learning_rate=args.lr,
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.1,
-        logging_steps=10,
-        save_strategy="epoch",
-        eval_strategy="epoch", # Changed from evaluation_strategy
-        fp16=False,
-        bf16=True,
-        max_grad_norm=0.3,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        grad_accum=args.grad_accum,
+        lr=args.lr,
     )
 
-    # pylint: disable=unexpected-keyword-arg
     # 5. Initialize & Run SFTTrainer
+    # pylint: disable=unexpected-keyword-arg
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
@@ -125,13 +114,14 @@ def main() -> None:
         args=training_args,
     )
 
-    print("Initiating Supervised Fine-Tuning...")
+    logger.info("Initiating Supervised Fine-Tuning...")
     trainer.train()
-    trainer.save_model(args.output)
-    print(f"Training complete. LoRA adapters saved to {args.output}")
+    trainer.save_model(output_dir)
+    logger.info("Training complete. LoRA adapters saved to %s", output_dir)
 
     # 6. Cleanup
-    cleanup_memory(trainer, model)
+    del trainer, model
+    clear_gpu_cache()
 
 
 if __name__ == "__main__":

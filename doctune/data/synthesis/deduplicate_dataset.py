@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 import torch
 from sentence_transformers import SentenceTransformer, util
 
 logger = logging.getLogger(__name__)
+
+_REQUIRED_KEYS = ("prompt", "chosen", "rejected")
 
 
 class DatasetFilter:
@@ -36,24 +39,21 @@ class DatasetFilter:
         self.accepted_data: list[dict] = []
         self.accepted_embeddings: torch.Tensor | None = None
 
-    def validate_schema(self, qa_pair: dict) -> bool:
-        """Validate that a QA tuple has the required non-empty fields.
+    @staticmethod
+    def validate_schema(qa_pair: dict) -> bool:
+        """Validate that a QA tuple has the required non-empty string fields.
 
         Args:
             qa_pair: A dict expected to contain ``"prompt"``, ``"chosen"``,
                 and ``"rejected"`` string keys.
 
         Returns:
-            ``True`` if all required fields are present and non-empty.
+            ``True`` if all required fields are present, are strings, and
+            are non-empty after stripping whitespace.
         """
-        required_keys = ["prompt", "chosen", "rejected"]
-
-        if not all(key in qa_pair for key in required_keys):
-            return False
-
         return all(
-            isinstance(qa_pair[key], str) and len(qa_pair[key].strip()) > 0
-            for key in required_keys
+            isinstance(qa_pair.get(key), str) and qa_pair[key].strip()
+            for key in _REQUIRED_KEYS
         )
 
     def process_new_pair(self, qa_pair: dict) -> bool:
@@ -67,7 +67,7 @@ class DatasetFilter:
             (schema failure or too similar to an existing pair).
         """
         if not self.validate_schema(qa_pair):
-            print("Dropped: Failed schema validation (missing keys or empty strings).")
+            logger.info("Dropped: Failed schema validation (missing keys or empty strings).")
             return False
 
         new_prompt = qa_pair["prompt"]
@@ -84,7 +84,10 @@ class DatasetFilter:
         max_similarity: float = torch.max(cosine_scores).item()
 
         if max_similarity > self.similarity_threshold:
-            print(f"Dropped: Semantic similarity too high ({max_similarity:.2f}) -> '{new_prompt}'")
+            logger.info(
+                "Dropped: Semantic similarity too high (%.2f) -> '%s'",
+                max_similarity, new_prompt,
+            )
             return False
 
         # Accept and add to vector store
@@ -100,11 +103,10 @@ class DatasetFilter:
         Args:
             output_path: Destination file path.
         """
-        print(f"\nSaving {len(self.accepted_data)} highly diverse QA pairs to {output_path}...")
-        with open(output_path, "w", encoding="utf-8") as f:
-            for item in self.accepted_data:
-                f.write(json.dumps(item) + "\n")
-        print("Dataset successfully compiled.")
+        content = "\n".join(json.dumps(item) for item in self.accepted_data) + "\n"
+        Path(output_path).write_text(content, encoding="utf-8")
+        logger.info("Saved %d QA pairs to %s", len(self.accepted_data), output_path)
+        print(f"Saved {len(self.accepted_data)} highly diverse QA pairs to {output_path}.")
 
 
 # ==============================================================================

@@ -9,12 +9,11 @@ initialization.  Used by both ``extract_dataset.py`` and ``build_dataset.py``.
 from __future__ import annotations
 
 import argparse
-import glob
 import logging
-import os
+from pathlib import Path
 
-from doctune.data.pdf_extractor import DoclingManualExtractor
-from doctune.data.pipeline_cache import PipelineCache
+from doctune.data.extraction.pdf_extractor import DoclingManualExtractor
+from doctune.data.pipeline.pipeline_cache import PipelineCache
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +30,8 @@ def extract_device_context(filename: str) -> str:
     Returns:
         A title-cased context label (e.g. ``"Product User Guide"``).
     """
-    base_name = os.path.basename(filename).replace(".pdf", "")
-    clean_name = base_name.replace("_", " ").replace("-", " ").title()
+    stem = Path(filename).stem
+    clean_name = stem.replace("_", " ").replace("-", " ").title()
     clean_name = clean_name.replace(" Manual", "").replace(" User Guide", "")
     return clean_name
 
@@ -44,9 +43,9 @@ def discover_pdfs(input_dir: str) -> list[str]:
         input_dir: Directory to scan.
 
     Returns:
-        Sorted list of ``*.pdf`` file paths, possibly empty.
+        Sorted list of ``*.pdf`` file paths (as strings), possibly empty.
     """
-    return sorted(glob.glob(os.path.join(input_dir, "*.pdf")))
+    return sorted(str(p) for p in Path(input_dir).glob("*.pdf"))
 
 
 # ------------------------------------------------------------------
@@ -76,6 +75,9 @@ def extract_chunks_cached(
 
         if cache.has_chunks(pdf_hash):
             chunks = cache.load_chunks(pdf_hash)
+            logger.info(
+                "[CACHE HIT] Loaded %d chunks (hash: %s)", len(chunks), pdf_hash,
+            )
             print(
                 f"  [CACHE HIT] Loaded {len(chunks)} chunks from cache "
                 f"(hash: {pdf_hash})"
@@ -84,6 +86,7 @@ def extract_chunks_cached(
 
     # No cache hit — run Docling extraction
     if extractor is None:
+        logger.warning("Cache miss for %s and extraction is disabled.", pdf_path)
         print(f"  [ERROR] Cache miss for {pdf_path} and extraction is disabled. Skipping.")
         return []
 
@@ -165,8 +168,10 @@ def init_extractor_and_cache(
     cache: PipelineCache | None = None
     if not args.no_cache:
         cache = PipelineCache(cache_dir=args.cache_dir, domain=args.domain)
+        logger.info("Cache enabled: %s", cache.cache_path)
         print(f"  Cache enabled: {cache.cache_path}")
     else:
+        logger.info("Cache disabled (--no-cache)")
         print("  Cache disabled (--no-cache)")
 
     return extractor, cache

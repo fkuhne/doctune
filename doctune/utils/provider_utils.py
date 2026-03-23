@@ -11,7 +11,10 @@ import functools
 import os
 import time
 import logging
-from typing import Any
+from typing import Any, Callable, ParamSpec, TypeVar
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +118,7 @@ def build_client(
 def retry_on_rate_limit(
     max_retries: int = 3,
     base_delay: float = 2.0,
-) -> Any:
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Decorator that retries a function on API rate-limit errors.
 
     Uses exponential backoff (``base_delay * 2^attempt``).
@@ -128,9 +131,9 @@ def retry_on_rate_limit(
         Decorated function with automatic retry behavior.
     """
 
-    def decorator(func: Any) -> Any:
+    def decorator(func: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             last_exception: Exception | None = None
             for attempt in range(max_retries + 1):
                 try:
@@ -146,10 +149,6 @@ def retry_on_rate_limit(
                             attempt + 1,
                             max_retries,
                             delay,
-                        )
-                        print(
-                            f"  [Rate limit — retrying in {delay:.0f}s "
-                            f"(attempt {attempt + 1}/{max_retries})]"
                         )
                         time.sleep(delay)
                         last_exception = exc
@@ -174,14 +173,13 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     """
     exc_type_name = type(exc).__name__
 
-    # OpenAI SDK
+    # OpenAI / Anthropic SDK — both expose a RateLimitError class
     if exc_type_name == "RateLimitError":
         return True
 
-    # Anthropic SDK
-    if exc_type_name in ("RateLimitError", "APIStatusError"):
-        status = getattr(exc, "status_code", None)
-        if status == 429:
+    # Anthropic SDK — generic status error with a 429 code
+    if exc_type_name == "APIStatusError":
+        if getattr(exc, "status_code", None) == 429:
             return True
 
     # Generic httpx / requests
