@@ -20,7 +20,7 @@ from transformers import TrainingArguments
 from peft import LoraConfig, TaskType
 from trl import SFTTrainer
 
-from model_utils import (
+from doctune.utils.model_utils import (
     detect_lora_target_modules,
     derive_run_name,
     load_tokenizer,

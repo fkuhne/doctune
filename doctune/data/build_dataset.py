@@ -1,9 +1,10 @@
 """
 build_dataset.py — Phase 2 orchestrator for training data generation.
 
-Scans a directory of PDFs, extracts content via Docling, synthesizes SFT
-and DPO training data using a teacher model, deduplicates via cosine
-similarity, and outputs a single ``alignment_dataset.jsonl`` file.
+Scans a directory of PDFs, loads cached extraction chunks (produced by
+``extract_dataset.py``), synthesizes SFT and DPO training data using a
+teacher model, deduplicates via cosine similarity, and outputs a single
+``alignment_dataset.jsonl`` file.
 
 Intermediate results are persisted to ``.cache/<domain>/`` so that
 interrupted runs can resume from the last completed chunk.
@@ -11,21 +12,24 @@ interrupted runs can resume from the last completed chunk.
 Usage::
 
     python build_dataset.py [--model MODEL] [--input-dir DIR] [--output PATH]
-    python build_dataset.py --extract-only --domain my_domain
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
 import logging
 import os
 import time
 
-from pdf_extractor import DoclingManualExtractor
-from teacher_model_synthesis import TeacherModelSynthesizer
-from deduplicate_dataset import DatasetFilter
-from pipeline_cache import PipelineCache
+from doctune.data.teacher_model_synthesis import TeacherModelSynthesizer
+from doctune.data.deduplicate_dataset import DatasetFilter
+from doctune.data.pipeline_utils import (
+    add_common_cli_args,
+    discover_pdfs,
+    extract_chunks_cached,
+    extract_device_context,
+    init_extractor_and_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +37,10 @@ logger = logging.getLogger(__name__)
 class DatasetBuilder:
     """Master orchestrator for the data curation pipeline.
 
-    Coordinates PDF extraction, teacher-model synthesis, and semantic
-    deduplication into a single end-to-end workflow.  Supports persistent
-    caching so that interrupted runs can resume from the last completed
-    chunk.
+    Coordinates PDF extraction (with caching), teacher-model synthesis,
+    and semantic deduplication into a single end-to-end workflow.
+    Supports persistent caching so that interrupted runs can resume from
+    the last completed chunk.
 
     Args:
         input_dir: Directory containing PDF manuals.
@@ -44,100 +48,32 @@ class DatasetBuilder:
         model: Teacher model identifier.
         provider: API provider (auto-detected if ``None``).
         domain: Subject-matter domain for prompt context.
-        cache_dir: Root directory for the pipeline cache.
-        no_cache: If ``True``, disable caching entirely.
-        extract_only: If ``True``, run only the extraction step.
+        extractor: Pre-initialised Docling extractor.
+        cache: Optional pipeline cache (``None`` disables caching).
     """
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        input_dir: str = "./manuals",
-        output_file: str = "alignment_dataset.jsonl",
-        model: str = "gpt-4o",
-        provider: str | None = None,
-        domain: str = "technical documentation",
-        cache_dir: str = ".cache",
-        no_cache: bool = False,
-        extract_only: bool = False,
-        docling_page_batch_size: int | None = None,
+        input_dir: str,
+        output_file: str,
+        model: str,
+        provider: str | None,
+        domain: str,
+        extractor: object | None,
+        cache: object | None,
     ) -> None:
         self.input_dir = input_dir
         self.output_file = output_file
-        self.extract_only = extract_only
-        self.no_cache = no_cache
+        self.extractor = extractor
+        self.cache = cache
 
         print("--- INITIALIZING PHASE 2 PIPELINE ---")
-        self.extractor = DoclingManualExtractor(
-            page_batch_size=docling_page_batch_size,
+        self.synthesizer = TeacherModelSynthesizer(
+            domain=domain,
+            model=model,
+            provider=provider,
         )
-
-        # Cache setup
-        self.cache: PipelineCache | None = None
-        if not no_cache:
-            self.cache = PipelineCache(cache_dir=cache_dir, domain=domain)
-            print(f"  Cache enabled: {self.cache.cache_path}")
-        else:
-            print("  Cache disabled (--no-cache)")
-
-        # Skip heavy model initialization when only extracting
-        if extract_only:
-            self.synthesizer = None  # type: ignore[assignment]
-            self.filter = None  # type: ignore[assignment]
-        else:
-            self.synthesizer = TeacherModelSynthesizer(
-                domain=domain,
-                model=model,
-                provider=provider,
-            )
-            self.filter = DatasetFilter(similarity_threshold=0.85)
-
-    def extract_device_context(self, filename: str) -> str:
-        """Convert a PDF filename into a clean source context string.
-
-        Args:
-            filename: Path to the PDF file (e.g. ``"product_user_guide.pdf"``).
-
-        Returns:
-            A title-cased context label (e.g. ``"Product User Guide"``).
-        """
-        base_name = os.path.basename(filename).replace(".pdf", "")
-        clean_name = base_name.replace("_", " ").replace("-", " ").title()
-        clean_name = clean_name.replace(" Manual", "").replace(" User Guide", "")
-        return clean_name
-
-    # ------------------------------------------------------------------
-    # Extraction (with optional caching)
-    # ------------------------------------------------------------------
-    def _extract_chunks(self, pdf_path: str, device_context: str) -> list[str]:
-        """Extract chunks from a PDF, using the cache when available.
-
-        Args:
-            pdf_path: Path to the PDF file.
-            device_context: Human-readable document label.
-
-        Returns:
-            List of enriched markdown chunk strings.
-        """
-        if self.cache is not None:
-            pdf_hash = self.cache.get_pdf_hash(pdf_path)
-
-            if self.cache.has_chunks(pdf_hash):
-                chunks = self.cache.load_chunks(pdf_hash)
-                print(
-                    f"  [CACHE HIT] Loaded {len(chunks)} chunks from cache "
-                    f"(hash: {pdf_hash})"
-                )
-                return chunks
-
-        # No cache hit — run Docling extraction
-        enriched_chunks = self.extractor.process_manual(pdf_path, device_context)
-
-        # Save to cache for future runs
-        if self.cache is not None and enriched_chunks:
-            self.cache.save_chunks(pdf_hash, enriched_chunks, pdf_path)
-            print(f"  [CACHED] Saved {len(enriched_chunks)} chunks (hash: {pdf_hash})")
-
-        return enriched_chunks
+        self.filter = DatasetFilter(similarity_threshold=0.85)
 
     # ------------------------------------------------------------------
     # Main build loop
@@ -145,13 +81,13 @@ class DatasetBuilder:
     def build(self) -> None:
         """Execute the full data curation pipeline.
 
-        Iterates through all PDFs in ``input_dir``, extracts chunks,
-        synthesizes SFT/DPO pairs, deduplicates, and saves the result.
-        Individual chunk failures are logged and skipped without stopping
-        the pipeline.  Caching ensures that completed work survives
-        interruptions.
+        Iterates through all PDFs in ``input_dir``, extracts chunks
+        (using the cache when available), synthesizes SFT/DPO pairs,
+        deduplicates, and saves the result.  Individual chunk failures
+        are logged and skipped without stopping the pipeline.  Caching
+        ensures that completed work survives interruptions.
         """
-        pdf_files = sorted(glob.glob(os.path.join(self.input_dir, "*.pdf")))
+        pdf_files = discover_pdfs(self.input_dir)
 
         if not pdf_files:
             print(f"CRITICAL: No PDFs found in directory '{self.input_dir}'.")
@@ -164,25 +100,19 @@ class DatasetBuilder:
         skipped_chunks = 0
 
         for i, pdf_path in enumerate(pdf_files):
-            device_context = self.extract_device_context(pdf_path)
+            device_context = extract_device_context(pdf_path)
             print("============================================================")
             print(f"Processing Manual {i + 1}/{len(pdf_files)}: {device_context}")
             print("============================================================")
 
             try:
                 # Step 1: Extract and Chunk (with caching)
-                enriched_chunks = self._extract_chunks(pdf_path, device_context)
+                enriched_chunks = extract_chunks_cached(
+                    pdf_path, device_context, self.extractor, self.cache,
+                )
 
                 if not enriched_chunks:
                     print("  No chunks extracted — skipping this manual.")
-                    continue
-
-                # If extract-only mode, skip synthesis entirely
-                if self.extract_only:
-                    print(
-                        f"  [EXTRACT-ONLY] {len(enriched_chunks)} chunks cached. "
-                        f"Skipping synthesis."
-                    )
                     continue
 
                 # Determine which chunks were already synthesized
@@ -258,14 +188,6 @@ class DatasetBuilder:
                 print(f"\nCRITICAL ERROR processing {pdf_path}: {e}")
                 print("Skipping to the next manual to preserve pipeline execution...")
 
-        # In extract-only mode, skip the summary and saving
-        if self.extract_only:
-            print("\n============================================================")
-            print("EXTRACTION COMPLETE (--extract-only mode).")
-            print(f"Chunks are cached in: {self.cache.cache_path if self.cache else 'N/A'}")
-            print("============================================================")
-            return
-
         # Final Summary
         print("\n============================================================")
         print("PIPELINE COMPLETE.")
@@ -289,36 +211,15 @@ if __name__ == "__main__":
     )
     parser.add_argument("--model", default="gpt-4o", help="Teacher model ID")
     parser.add_argument("--provider", default=None, help="API provider (auto-detected)")
-    parser.add_argument("--domain", default="technical documentation", help="Subject-matter domain")
-    parser.add_argument(
-        "--input-dir", default="./manuals", help="Directory containing PDF manuals"
-    )
     parser.add_argument(
         "--output", default="alignment_dataset.jsonl", help="Output JSONL file path"
     )
-    parser.add_argument(
-        "--cache-dir", default=".cache", help="Root directory for the pipeline cache"
-    )
-    parser.add_argument(
-        "--no-cache", action="store_true", help="Disable caching (fresh run every time)"
-    )
-    parser.add_argument(
-        "--extract-only",
-        action="store_true",
-        help="Run only Docling extraction, save chunks to cache, then exit",
-    )
-    parser.add_argument(
-        "--docling-page-batch-size",
-        type=int,
-        default=None,
-        help=(
-            "Pages per Docling conversion batch. Lower values reduce memory spikes "
-            "on large PDFs (default: env DOCTUNE_DOCLING_PAGE_BATCH_SIZE or 25)."
-        ),
-    )
+    add_common_cli_args(parser)
     args = parser.parse_args()
 
     os.makedirs(args.input_dir, exist_ok=True)
+
+    extractor, cache = init_extractor_and_cache(args, init_extractor=False)
 
     builder = DatasetBuilder(
         input_dir=args.input_dir,
@@ -326,10 +227,8 @@ if __name__ == "__main__":
         model=args.model,
         provider=args.provider,
         domain=args.domain,
-        cache_dir=args.cache_dir,
-        no_cache=args.no_cache,
-        extract_only=args.extract_only,
-        docling_page_batch_size=args.docling_page_batch_size,
+        extractor=extractor,
+        cache=cache,
     )
 
     builder.build()

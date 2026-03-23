@@ -23,7 +23,7 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from model_utils import format_prompt_for_eval, load_tokenizer, cleanup_memory
+from doctune.utils.model_utils import format_prompt_for_eval, load_tokenizer, cleanup_memory
 
 # ──────────────────────────────────────────────
 # LLM-as-Judge

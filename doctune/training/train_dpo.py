@@ -22,7 +22,7 @@ from transformers import TrainingArguments
 from peft import PeftModel
 from trl import DPOTrainer
 
-from model_utils import (
+from doctune.utils.model_utils import (
     derive_run_name,
     load_tokenizer,
     load_base_model,

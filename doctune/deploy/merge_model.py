@@ -19,7 +19,7 @@ import torch
 from transformers import AutoModelForCausalLM
 from peft import PeftModel
 
-from model_utils import load_tokenizer
+from doctune.utils.model_utils import load_tokenizer
 
 
 def parse_args() -> argparse.Namespace:

@@ -44,20 +44,8 @@ dev = [
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = [
-    "generate_golden_eval",
-    "teacher_model_synthesis",
-    "train_sft",
-    "merge_model",
-    "train_dpo",
-    "pdf_extractor",
-    "evaluate",
-    "build_dataset",
-    "deduplicate_dataset",
-    "model_utils",
-    "provider_utils"
-]
+[tool.setuptools.packages.find]
+include = ["doctune*"]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch"]

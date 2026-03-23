@@ -13,7 +13,7 @@ import logging
 
 from pydantic import BaseModel, ConfigDict
 
-from provider_utils import build_client, detect_provider, retry_on_rate_limit
+from doctune.utils.provider_utils import build_client, detect_provider, retry_on_rate_limit
 
 logger = logging.getLogger(__name__)
 

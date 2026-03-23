@@ -16,9 +16,10 @@ env/
 .env
 .env.local
 
-# IDE
+# IDE / Linter caches
 .vscode/
 .idea/
+.ruff_cache/
 *.swp
 *.swo
 *~
