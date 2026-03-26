@@ -13,6 +13,10 @@ from doctune.utils.provider_utils import (
     detect_provider,
     retry_on_rate_limit,
 )
+from doctune.utils.pricing import (
+    OPENAI_PRICING_PER_1M,
+    compute_model_usage_cost,
+)
 
 __all__ = [
     # model_utils
@@ -26,4 +30,7 @@ __all__ = [
     "build_client",
     "detect_provider",
     "retry_on_rate_limit",
+    # pricing
+    "OPENAI_PRICING_PER_1M",
+    "compute_model_usage_cost",
 ]

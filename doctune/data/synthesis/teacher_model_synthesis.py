@@ -13,9 +13,70 @@ import logging
 
 from pydantic import BaseModel, ConfigDict
 
+from doctune.utils.pricing import compute_model_usage_cost
 from doctune.utils.provider_utils import build_client, detect_provider, retry_on_rate_limit
 
 logger = logging.getLogger(__name__)
+
+UsageMetrics = dict[str, int]
+
+
+def _build_usage(input_tokens: int | None, output_tokens: int | None) -> UsageMetrics:
+    """Normalize usage values to a consistent integer metrics dict."""
+    return {
+        "input_tokens": max(0, int(input_tokens or 0)),
+        "output_tokens": max(0, int(output_tokens or 0)),
+    }
+
+
+def _extract_usage_from_openai_responses(response: object) -> UsageMetrics:
+    """Extract usage metrics from an OpenAI Responses API object."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return _build_usage(0, 0)
+    return _build_usage(
+        getattr(usage, "input_tokens", None),
+        getattr(usage, "output_tokens", None),
+    )
+
+
+def _extract_usage_from_openai_chat(response: object) -> UsageMetrics:
+    """Extract usage metrics from OpenAI-compatible Chat Completions responses."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return _build_usage(0, 0)
+    return _build_usage(
+        getattr(usage, "prompt_tokens", None),
+        getattr(usage, "completion_tokens", None),
+    )
+
+
+def _extract_usage_from_anthropic(response: object) -> UsageMetrics:
+    """Extract usage metrics from Anthropic responses."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return _build_usage(0, 0)
+    return _build_usage(
+        getattr(usage, "input_tokens", None),
+        getattr(usage, "output_tokens", None),
+    )
+
+
+def _split_usage_across_pairs(total_usage: UsageMetrics, pair_count: int) -> list[UsageMetrics]:
+    """Distribute shared token usage across generated SFT pairs."""
+    if pair_count <= 0:
+        return []
+
+    input_base, input_remainder = divmod(total_usage["input_tokens"], pair_count)
+    output_base, output_remainder = divmod(total_usage["output_tokens"], pair_count)
+
+    distributed: list[UsageMetrics] = []
+    for index in range(pair_count):
+        distributed.append({
+            "input_tokens": input_base + (1 if index < input_remainder else 0),
+            "output_tokens": output_base + (1 if index < output_remainder else 0),
+        })
+    return distributed
 
 # ==============================================================================
 # Pydantic Schemas for Strict API Formatting
@@ -111,7 +172,11 @@ class TeacherModelSynthesizer:
     # OpenAI implementation (structured outputs via Pydantic)
     # --------------------------------------------------------------------------
     @retry_on_rate_limit()
-    def _openai_generate_sft(self, system_prompt: str, user_prompt: str) -> list[dict]:
+    def _openai_generate_sft(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[list[dict], UsageMetrics]:
         """Generate SFT pairs via OpenAI structured outputs.
 
         Args:
@@ -119,7 +184,9 @@ class TeacherModelSynthesizer:
             user_prompt: User-facing prompt with the document chunk.
 
         Returns:
-            List of dicts with ``"prompt"`` and ``"chosen"`` keys.
+            Tuple of:
+            - List of dicts with ``"prompt"`` and ``"chosen"`` keys.
+            - Usage metrics for the API call.
         """
         response = self.client.responses.parse(
             model=self.model,
@@ -127,10 +194,17 @@ class TeacherModelSynthesizer:
             input=user_prompt,
             text_format=SFTResponse,
         )
-        return [pair.model_dump() for pair in response.output_parsed.qa_pairs]
+        return (
+            [pair.model_dump() for pair in response.output_parsed.qa_pairs],
+            _extract_usage_from_openai_responses(response),
+        )
 
     @retry_on_rate_limit()
-    def _openai_generate_dpo(self, system_prompt: str, user_prompt: str) -> str | None:
+    def _openai_generate_dpo(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[str | None, UsageMetrics]:
         """Generate a DPO rejected response via OpenAI structured outputs.
 
         Args:
@@ -138,7 +212,9 @@ class TeacherModelSynthesizer:
             user_prompt: User-facing prompt with the original QA pair.
 
         Returns:
-            The rejected response string, or ``None`` on failure.
+            Tuple of:
+            - Rejected response string, or ``None`` on failure.
+            - Usage metrics for the API call.
         """
         response = self.client.responses.parse(
             model=self.model,
@@ -146,7 +222,10 @@ class TeacherModelSynthesizer:
             input=user_prompt,
             text_format=DPOResponse,
         )
-        return response.output_parsed.rejected
+        return (
+            response.output_parsed.rejected,
+            _extract_usage_from_openai_responses(response),
+        )
 
     # --------------------------------------------------------------------------
     # JSON-mode implementation (shared by Anthropic & Ollama)
@@ -154,8 +233,8 @@ class TeacherModelSynthesizer:
     @retry_on_rate_limit()
     def _anthropic_raw_call(
         self, system_prompt: str, user_prompt: str, temperature: float,
-    ) -> str:
-        """Make a raw Anthropic API call and return the text content."""
+    ) -> tuple[str, UsageMetrics]:
+        """Make a raw Anthropic API call and return text with usage."""
         response = self.client.messages.create(
             model=self.model,
             max_tokens=4096,
@@ -163,13 +242,13 @@ class TeacherModelSynthesizer:
             messages=[{"role": "user", "content": user_prompt}],
             temperature=temperature,
         )
-        return response.content[0].text
+        return response.content[0].text, _extract_usage_from_anthropic(response)
 
     @retry_on_rate_limit()
     def _ollama_raw_call(
         self, system_prompt: str, user_prompt: str, temperature: float,
-    ) -> str:
-        """Make a raw Ollama API call via the OpenAI-compatible endpoint."""
+    ) -> tuple[str, UsageMetrics]:
+        """Make a raw Ollama API call and return text with usage."""
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -179,11 +258,12 @@ class TeacherModelSynthesizer:
             temperature=temperature,
             response_format={"type": "json_object"},
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content or ""
+        return content, _extract_usage_from_openai_chat(response)
 
     def _json_mode_call(
         self, system_prompt: str, user_prompt: str, temperature: float = 0.3,
-    ) -> str:
+    ) -> tuple[str, UsageMetrics]:
         """Dispatch a JSON-mode API call to the appropriate non-OpenAI provider.
 
         Args:
@@ -192,7 +272,7 @@ class TeacherModelSynthesizer:
             temperature: Sampling temperature.
 
         Returns:
-            Raw JSON text response from the model.
+            Tuple of raw JSON response text and usage metrics.
         """
         if self.provider == "anthropic":
             return self._anthropic_raw_call(system_prompt, user_prompt, temperature)
@@ -200,35 +280,40 @@ class TeacherModelSynthesizer:
 
     def _json_mode_generate_sft(
         self, system_prompt: str, user_prompt: str,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], UsageMetrics]:
         """Generate SFT pairs via JSON mode (Anthropic or Ollama)."""
-        raw = self._json_mode_call(
+        raw, usage = self._json_mode_call(
             system_prompt + _SFT_JSON_INSTRUCTION, user_prompt, temperature=0.3,
         )
         parsed = SFTResponse.model_validate_json(raw)
-        return [pair.model_dump() for pair in parsed.qa_pairs]
+        return [pair.model_dump() for pair in parsed.qa_pairs], usage
 
     def _json_mode_generate_dpo(
         self, system_prompt: str, user_prompt: str,
-    ) -> str | None:
+    ) -> tuple[str | None, UsageMetrics]:
         """Generate a DPO rejected response via JSON mode (Anthropic or Ollama)."""
-        raw = self._json_mode_call(
+        raw, usage = self._json_mode_call(
             system_prompt + _DPO_JSON_INSTRUCTION, user_prompt, temperature=0.5,
         )
         parsed = DPOResponse.model_validate_json(raw)
-        return parsed.rejected
+        return parsed.rejected, usage
 
     # --------------------------------------------------------------------------
     # Public API (provider-agnostic)
     # --------------------------------------------------------------------------
-    def generate_sft_pairs(self, markdown_chunk: str) -> list[dict]:
+    def generate_sft_pairs(
+        self,
+        markdown_chunk: str,
+    ) -> list[tuple[dict[str, str], UsageMetrics]]:
         """Generate diverse SFT QA pairs from a document chunk.
 
         Args:
             markdown_chunk: A Docling-produced markdown text chunk.
 
         Returns:
-            List of dicts with ``"prompt"`` and ``"chosen"`` keys.
+            List of ``(pair, usage)`` tuples where:
+            - ``pair`` has ``"prompt"`` and ``"chosen"`` keys.
+            - ``usage`` contains per-pair ``input_tokens`` and ``output_tokens``.
             Returns an empty list if generation fails.
         """
         system_prompt = (
@@ -256,7 +341,9 @@ class TeacherModelSynthesizer:
         )
 
         try:
-            return generate(system_prompt, user_prompt)
+            pairs, total_usage = generate(system_prompt, user_prompt)
+            usage_per_pair = _split_usage_across_pairs(total_usage, len(pairs))
+            return list(zip(pairs, usage_per_pair, strict=False))
         except json.JSONDecodeError as e:
             logger.warning("SFT generation returned invalid JSON: %s", e)
             return []
@@ -264,7 +351,11 @@ class TeacherModelSynthesizer:
             logger.error("SFT Generation Error: %s", e)
             return []
 
-    def generate_dpo_rejection(self, prompt: str, chosen: str) -> str | None:
+    def generate_dpo_rejection(
+        self,
+        prompt: str,
+        chosen: str,
+    ) -> tuple[str | None, UsageMetrics]:
         """Generate a subtly flawed 'rejected' answer for DPO alignment.
 
         Args:
@@ -272,7 +363,9 @@ class TeacherModelSynthesizer:
             chosen: The correct answer from the SFT pair.
 
         Returns:
-            A plausible but factually incorrect response, or ``None`` on failure.
+            Tuple of:
+            - A plausible but factually incorrect response, or ``None`` on failure.
+            - DPO call usage metrics.
         """
         system_prompt = (
             "You are an AI safety and alignment expert. Your task is to generate a 'rejected' "
@@ -299,10 +392,10 @@ class TeacherModelSynthesizer:
             return generate(system_prompt, user_prompt)
         except json.JSONDecodeError as e:
             logger.warning("DPO generation returned invalid JSON: %s", e)
-            return None
+            return None, _build_usage(0, 0)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("DPO Generation Error: %s", e)
-            return None
+            return None, _build_usage(0, 0)
 
     def process_chunk(self, markdown_chunk: str) -> list[dict]:
         """Orchestrate the full pipeline for a single chunk: SFT → DPO.
@@ -312,20 +405,36 @@ class TeacherModelSynthesizer:
 
         Returns:
             List of complete tuples with ``"prompt"``, ``"chosen"``, and
-            ``"rejected"`` keys.
+            ``"rejected"`` keys plus ``"metadata"``:
+            ``{"model", "input_tokens", "output_tokens", "cost_usd"}``.
         """
         sft_pairs = self.generate_sft_pairs(markdown_chunk)
         if not sft_pairs:
             return []
 
         final_tuples: list[dict] = []
-        for pair in sft_pairs:
-            rejected_text = self.generate_dpo_rejection(pair["prompt"], pair["chosen"])
+        for pair, sft_usage in sft_pairs:
+            rejected_text, dpo_usage = self.generate_dpo_rejection(
+                pair["prompt"], pair["chosen"],
+            )
             if rejected_text:
+                input_tokens = sft_usage["input_tokens"] + dpo_usage["input_tokens"]
+                output_tokens = sft_usage["output_tokens"] + dpo_usage["output_tokens"]
+                cost_usd = compute_model_usage_cost(
+                    model=self.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
                 final_tuples.append({
                     "prompt": pair["prompt"],
                     "chosen": pair["chosen"],
                     "rejected": rejected_text,
+                    "metadata": {
+                        "model": self.model,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": round(cost_usd, 10),
+                    },
                 })
 
         return final_tuples

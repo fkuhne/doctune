@@ -1,4 +1,4 @@
-.PHONY: install local-setup data train-sft train-dpo eval eval-baseline merge serve lint clean help
+.PHONY: install local-setup data spend-report train-sft train-dpo eval eval-baseline merge serve lint clean help
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -19,6 +19,9 @@ local-setup: ## Set up local environment for Phase 2 data generation (no GPU)
 
 data: ## Generate the training dataset from PDFs in ./manuals/ (no GPU)
 	python -m doctune.data.pipeline.build_dataset
+
+spend-report: ## Summarize token and USD spend from synthesis cache (.cache)
+	python -m doctune.data.synthesis.report_synthesis_spend --input .cache
 
 # ──────────────────────────────────────────────
 # Training (Phases 3–4) — GPU required
