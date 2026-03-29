@@ -15,6 +15,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Maximum tokens per chunk sent to the teacher model.
+# HybridChunker enforces this ceiling; see __init__ for rationale.
+_MAX_CHUNK_TOKENS: int = 350
+
 
 class DoclingManualExtractor: # pylint: disable=too-few-public-methods
     """Extracts and chunks PDF documents using IBM Docling.
@@ -63,7 +67,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         """Initialize the Docling converter and hierarchical chunker."""
         # pylint: disable=import-outside-toplevel
         from docling.document_converter import DocumentConverter, PdfFormatOption
-        from docling.chunking import HierarchicalChunker
+        from docling.chunking import HybridChunker
         from docling.datamodel.accelerator_options import AcceleratorOptions
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
@@ -80,7 +84,11 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         self._accelerator_options_cls = AcceleratorOptions
         self.converter = self._build_converter()
         self._suppress_rapidocr_logs()
-        self.chunker = HierarchicalChunker()
+        self.chunker = HybridChunker(
+            tokenizer="BAAI/bge-small-en-v1.5",  # lightweight; used only for token counting
+            max_tokens=_MAX_CHUNK_TOKENS,
+            merge_peers=True,  # merges tiny sibling chunks up to the limit
+        )
 
         # Process large PDFs in bounded page windows to reduce native-memory spikes.
         self.page_batch_size = (
@@ -399,7 +407,8 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
             for chunk in chunks:
                 raw_text = chunk.text
 
-                # Filter out tiny, useless chunks (isolated page numbers, logos, etc.)
+                # Floor: ~20 tokens. Filters page numbers, isolated captions, lone headings.
+                # Ceiling is enforced upstream by HybridChunker at _MAX_CHUNK_TOKENS.
                 if len(raw_text.strip()) < 100:
                     continue
 
@@ -408,6 +417,22 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                     f"{raw_text}\n"
                 )
                 final_dataset_chunks.append(enriched_chunk)
+
+        # --- TEMPORARY DIAGNOSTIC — remove after validation ---
+        try:
+            from transformers import AutoTokenizer as _Tok
+            _tok = _Tok.from_pretrained("BAAI/bge-small-en-v1.5")
+            token_counts = [len(_tok.encode(c)) for c in final_dataset_chunks]
+            if token_counts:
+                print(f"\n--- Chunk token distribution ---")
+                print(f"  Count : {len(token_counts)}")
+                print(f"  Min   : {min(token_counts)}")
+                print(f"  Max   : {max(token_counts)}")
+                print(f"  Mean  : {sum(token_counts) / len(token_counts):.0f}")
+                print(f"  >350  : {sum(1 for t in token_counts if t > _MAX_CHUNK_TOKENS)} chunks above ceiling")
+        except Exception:
+            pass
+        # --- END DIAGNOSTIC ---
 
         print(f"Extraction complete. Yielded {len(final_dataset_chunks)} high-fidelity chunks.")
         return final_dataset_chunks

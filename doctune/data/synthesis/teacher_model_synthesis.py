@@ -331,7 +331,9 @@ class TeacherModelSynthesizer:
         )
         user_prompt = (
             f'Text Chunk:\n"""{markdown_chunk}"""\n\n'
-            'Generate 2 to 3 Question-Answer pairs.'
+            "Identify the most specific actionable claim, step, or fact in this chunk. "
+            "Generate 2 to 3 Question-Answer pairs, each targeting a *distinct* piece of "
+            "information. Do not ask the same question twice in different words."
         )
 
         generate = (
