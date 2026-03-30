@@ -32,6 +32,7 @@ from doctune.data.pipeline.pipeline_utils import (
     init_extractor_and_cache,
 )
 from doctune.data.synthesis.deduplicate_dataset import ChunkFilter, DatasetFilter
+from doctune.data.synthesis.diversity_selector import DiversitySelector
 from doctune.data.synthesis.teacher_model_synthesis import TeacherModelSynthesizer
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class DatasetBuilder:  # pylint: disable=too-few-public-methods
         domain: str,
         extractor: DoclingManualExtractor | None,
         cache: PipelineCache | None,
+        diversity_ratio: float | None = 0.7,
     ) -> None:
         self.input_dir = input_dir
         self.output_file = output_file
@@ -100,6 +102,11 @@ class DatasetBuilder:  # pylint: disable=too-few-public-methods
         )
         self.filter = DatasetFilter(similarity_threshold=0.92)
         self.chunk_filter = ChunkFilter(similarity_threshold=0.82)
+        self.diversity_selector: DiversitySelector | None = (
+            DiversitySelector(diversity_ratio=diversity_ratio)
+            if diversity_ratio is not None
+            else None
+        )
 
     # ------------------------------------------------------------------
     # Cache helper
@@ -190,6 +197,27 @@ class DatasetBuilder:  # pylint: disable=too-few-public-methods
                     f"chunks already processed — resuming from next."
                 )
 
+        # Gate 2 — diversity selection (operates on the full filtered list)
+        if self.diversity_selector is not None:
+            surviving = [
+                (j, c) for j, c in enumerate(enriched_chunks)
+                if j not in completed_indices
+                and not self.chunk_filter.is_duplicate(c)
+            ]
+            if surviving:
+                idxs, texts = zip(*surviving)
+                result = self.diversity_selector.select(list(texts))
+                diverse_set = set(idxs[i] for i in result.selected_indices)
+                print(
+                    f"  [DiversitySelector] {result.stats['selected_chunks']}/"
+                    f"{result.stats['total_chunks']} chunks selected"
+                    + (" [sliding window]" if result.used_sliding_window else "")
+                )
+            else:
+                diverse_set = set()
+        else:
+            diverse_set = None  # selector disabled — pass all chunks
+
         # Step 2: Iterate through every chunk
         for j, chunk in enumerate(enriched_chunks):
             # Skip chunks already completed in a previous run
@@ -197,14 +225,14 @@ class DatasetBuilder:  # pylint: disable=too-few-public-methods
                 stats.total_chunks_processed += 1
                 continue
 
-            # Gate 1 — chunk-level dedup (fires before any API call)
-            if self.chunk_filter.is_duplicate(chunk):
-                print(
-                    f"  -> Chunk {j + 1}/{len(enriched_chunks)} "
-                    f"[DUPLICATE SOURCE — skipped]"
-                )
+            # Gate 1 — chunk dedup (already evaluated above if selector active)
+            if diverse_set is not None:
+                if j not in diverse_set:
+                    stats.total_chunks_processed += 1
+                    self._cache_synthesis(pdf_hash, j, [])
+                    continue
+            elif self.chunk_filter.is_duplicate(chunk):
                 stats.total_chunks_processed += 1
-                # Cache an empty result so this chunk is skipped on resume too.
                 self._cache_synthesis(pdf_hash, j, [])
                 continue
 
@@ -271,6 +299,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output", default="alignment_dataset.jsonl", help="Output JSONL file path"
     )
+    parser.add_argument(
+        "--diversity-ratio", type=float, default=0.7,
+        help=(
+            "Fraction of chunks to keep after diversity selection (0.0–1.0). "
+            "Default 0.7 keeps the 70%% most diverse chunks per document. "
+            "Pass --no-diversity to disable."
+        ),
+    )
+    parser.add_argument(
+        "--no-diversity", action="store_true",
+        help="Disable the diversity selector (send all chunks to synthesis)."
+    )
     add_common_cli_args(parser)
     args = parser.parse_args()
 
@@ -296,6 +336,7 @@ if __name__ == "__main__":
         domain=args.domain,
         extractor=cli_extractor,
         cache=cli_cache,
+        diversity_ratio=None if args.no_diversity else args.diversity_ratio,
     )
 
     builder.build()
