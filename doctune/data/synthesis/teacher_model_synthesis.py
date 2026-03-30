@@ -299,6 +299,43 @@ class TeacherModelSynthesizer:
         return parsed.rejected, usage
 
     # --------------------------------------------------------------------------
+    # Prompt construction
+    # --------------------------------------------------------------------------
+    @staticmethod
+    def _build_sft_user_prompt(markdown_chunk: str) -> str:
+        """Build the two-stage user prompt for SFT pair generation.
+
+        Stage 1 asks the model to identify and state the single most specific,
+        actionable claim or procedure in the chunk.  Stage 2 asks it to generate
+        all questions from that named anchor, preventing question drift across
+        unrelated sub-topics.
+
+        Args:
+            markdown_chunk: Enriched chunk string including the source-context
+                header produced by ``DoclingManualExtractor``.
+
+        Returns:
+            Formatted user prompt string ready for the teacher model.
+        """
+        return (
+            f'Text Chunk:\n"""{markdown_chunk}"""\n\n'
+            "Step 1 — Focus selection:\n"
+            "Identify the single most specific, actionable claim, step sequence, or "
+            "specification in the chunk above. State it in one sentence before generating "
+            "any questions. Label it: FOCUS: <your one-sentence statement>\n\n"
+            "Step 2 — Question generation:\n"
+            "Using ONLY the fact or procedure you named in Step 1 as your anchor, "
+            "generate exactly 3 Question-Answer pairs that each approach that same "
+            "anchor from a different angle:\n"
+            "  • Angle A — Symptom-based: the user describes a problem or observation.\n"
+            "  • Angle B — Direct action: the user asks how to perform the procedure.\n"
+            "  • Angle C — Edge-case or clarification: the user asks about a boundary "
+            "condition, a prerequisite, or a detail that is easy to get wrong.\n\n"
+            "All three questions must be answerable from the chunk text alone and must "
+            "clearly refer to the same specific claim you named in Step 1."
+        )
+
+    # --------------------------------------------------------------------------
     # Public API (provider-agnostic)
     # --------------------------------------------------------------------------
     def generate_sft_pairs(
@@ -325,8 +362,9 @@ class TeacherModelSynthesizer:
             "1. Do NOT hallucinate or use external knowledge. The answer must be "
             "derived strictly from the text.\n"
             "2. If the text lacks actionable or 'how-to' information, output an empty array.\n"
-            "3. Generate questions from multiple angles (e.g., direct action, "
-            "symptom-based, clarification).\n"
+            "3. Always generate exactly 3 questions: one symptom-based, one direct-action, "
+            "and one edge-case or clarification question. All three must target the same "
+            "specific claim you identified in Step 1 of the user prompt.\n"
             "4. The chunk header contains a [Source Context] and, when available, "
             "a [Section] breadcrumb showing exactly where in the document this text "
             "appears. Use the most specific heading in that breadcrumb to ground "
@@ -336,12 +374,7 @@ class TeacherModelSynthesizer:
             "be answerable only by someone who knows which section it comes from "
             "(i.e. include a section-specific detail in the question itself)."
         )
-        user_prompt = (
-            f'Text Chunk:\n"""{markdown_chunk}"""\n\n'
-            "Identify the most specific actionable claim, step, or fact in this chunk. "
-            "Generate 2 to 3 Question-Answer pairs, each targeting a *distinct* piece of "
-            "information. Do not ask the same question twice in different words."
-        )
+        user_prompt = self._build_sft_user_prompt(markdown_chunk)
 
         generate = (
             self._openai_generate_sft
