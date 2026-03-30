@@ -98,7 +98,7 @@ class DatasetBuilder:  # pylint: disable=too-few-public-methods
             model=model,
             provider=provider,
         )
-        self.filter = DatasetFilter(similarity_threshold=0.85)
+        self.filter = DatasetFilter(similarity_threshold=0.92)
         self.chunk_filter = ChunkFilter(similarity_threshold=0.82)
 
     # ------------------------------------------------------------------
@@ -258,10 +258,31 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="gpt-4o", help="Teacher model ID")
     parser.add_argument("--provider", default=None, help="API provider (auto-detected)")
     parser.add_argument(
+        "--log-level",
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging verbosity. Use INFO to see dedup audit lines.",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Write logs to this file in addition to stderr (optional).",
+    )
+    parser.add_argument(
         "--output", default="alignment_dataset.jsonl", help="Output JSONL file path"
     )
     add_common_cli_args(parser)
     args = parser.parse_args()
+
+    # Configure logging
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if args.log_file:
+        handlers.append(logging.FileHandler(args.log_file, encoding="utf-8"))
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
 
     Path(args.input_dir).mkdir(parents=True, exist_ok=True)
 

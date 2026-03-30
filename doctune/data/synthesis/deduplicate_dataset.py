@@ -38,10 +38,10 @@ class DatasetFilter:
 
     Args:
         similarity_threshold: Maximum cosine similarity allowed between
-            any two accepted prompts (default ``0.85``).
+            any two accepted prompts (default ``0.92``).
     """
 
-    def __init__(self, similarity_threshold: float = 0.85) -> None:
+    def __init__(self, similarity_threshold: float = 0.92) -> None:
         print("Loading Embedding Model...")
         self.model = _get_embedding_model()
         self.similarity_threshold = similarity_threshold
@@ -73,8 +73,7 @@ class DatasetFilter:
             qa_pair: A dict with ``"prompt"``, ``"chosen"``, ``"rejected"`` keys.
 
         Returns:
-            ``True`` if the pair was accepted, ``False`` if it was dropped
-            (schema failure or too similar to an existing pair).
+            ``True`` if the pair was accepted, ``False`` if dropped.
         """
         if not self.validate_schema(qa_pair):
             logger.info("Dropped: Failed schema validation (missing keys or empty strings).")
@@ -94,10 +93,18 @@ class DatasetFilter:
         max_similarity: float = torch.max(cosine_scores).item()
 
         if max_similarity > self.similarity_threshold:
+            # ── Structured audit log ───────────────────────────────────────
+            matched_idx: int = int(torch.argmax(cosine_scores).item())
+            matched_prompt: str = self.accepted_data[matched_idx].get("prompt", "")
             logger.info(
-                "Dropped: Semantic similarity too high (%.2f) -> '%s'",
-                max_similarity, new_prompt,
+                "DEDUP_DROP | score=%.4f | threshold=%.2f | "
+                "dropped=%r | matched=%r",
+                max_similarity,
+                self.similarity_threshold,
+                new_prompt[:120],
+                matched_prompt[:120],
             )
+            # ── End audit log ──────────────────────────────────────────────
             return False
 
         # Accept and add to vector store
@@ -196,7 +203,7 @@ class ChunkFilter:
 # CLI Entry Point
 # ==============================================================================
 if __name__ == "__main__":
-    qa_filter = DatasetFilter(similarity_threshold=0.85)
+    qa_filter = DatasetFilter(similarity_threshold=0.92)
 
     synthetic_outputs = [
         {
