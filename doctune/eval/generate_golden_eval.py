@@ -39,6 +39,63 @@ _JSON_INSTRUCTION = (
 )
 
 # ---------------------------------------------------------------------------
+# Eval contamination guard
+# ---------------------------------------------------------------------------
+
+def _check_family_separation(eval_model: str, train_model: str) -> None:
+    """Enforce that eval and training models come from different providers.
+
+    Args:
+        eval_model: Model identifier to be used for eval generation.
+        train_model: Model identifier used to generate training data.
+
+    Raises:
+        SystemExit: If both models resolve to the same provider family,
+            unless the user explicitly overrides with ``--allow-same-family``.
+    """
+    eval_provider  = detect_provider(eval_model)
+    train_provider = detect_provider(train_model)
+
+    if eval_provider == train_provider:
+        print(
+            f"\n  [CONTAMINATION WARNING]\n"
+            f"  Eval model  : {eval_model!r}  (provider: {eval_provider})\n"
+            f"  Train model : {train_model!r}  (provider: {train_provider})\n"
+            f"\n"
+            f"  Both models are from the same provider family.\n"
+            f"  The eval set will share distributional biases with the training\n"
+            f"  data, making accuracy metrics unreliable.\n"
+            f"\n"
+            f"  Recommended eval models when training provider is '{train_provider}':\n"
+        )
+        _print_alternative_suggestions(train_provider)
+        print(
+            f"\n  To override this check (not recommended), pass:\n"
+            f"    --allow-same-family\n"
+        )
+        sys.exit(1)
+
+    print(
+        f"  [OK] Family separation confirmed: "
+        f"eval={eval_provider!r}, train={train_provider!r}"
+    )
+
+
+_FAMILY_ALTERNATIVES: dict[str, list[str]] = {
+    "openai":    ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    "anthropic": ["gpt-5.4", "gpt-5.4-mini"],
+    "ollama":    ["claude-3-5-haiku-20241022", "gpt-5.4-mini"],
+}
+
+
+def _print_alternative_suggestions(train_provider: str) -> None:
+    """Print suggested eval models for a given training provider."""
+    alternatives = _FAMILY_ALTERNATIVES.get(train_provider, [])
+    for alt in alternatives:
+        print(f"    {alt}")
+
+
+# ---------------------------------------------------------------------------
 # Eval scenario type definitions
 # ---------------------------------------------------------------------------
 
@@ -329,6 +386,20 @@ def main() -> None:
         help="Total number of scenarios to generate (recommended: 250-500)",
     )
     parser.add_argument(
+        "--train-model",
+        default=None,
+        help=(
+            "Model ID used to generate training data (e.g. 'gpt-4o'). "
+            "When provided, the eval model must be from a different provider "
+            "family to prevent contamination."
+        ),
+    )
+    parser.add_argument(
+        "--allow-same-family",
+        action="store_true",
+        help="Bypass the family-separation check (not recommended).",
+    )
+    parser.add_argument(
         "--batch-size", type=int, default=20,   # raised from hardcoded 10
         help="Scenarios per API call (default 20; lower if hitting token limits)",
     )
@@ -345,6 +416,22 @@ def main() -> None:
 
     provider = args.provider or detect_provider(args.model)
     client = build_client(provider, api_key=args.api_key)
+
+    # Contamination guard — enforce family separation
+    if args.train_model and not args.allow_same_family:
+        _check_family_separation(args.model, args.train_model)
+    elif not args.train_model:
+        print(
+            "  [INFO] --train-model not specified. "
+            "Family separation cannot be verified. "
+            "Pass --train-model <model-id> to enforce it."
+        )
+    if args.allow_same_family:
+        print(
+            "  [WARN] --allow-same-family passed. "
+            "Eval results may not accurately reflect out-of-distribution performance."
+        )
+
     domain = os.environ.get("DOMAIN", "technical documentation")
 
     # Pre-flight cost estimate
