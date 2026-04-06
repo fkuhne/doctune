@@ -34,8 +34,15 @@ def parse_args() -> argparse.Namespace:
         "--model-id", type=str, required=True,
         help="HuggingFace model ID (e.g. meta-llama/Llama-3.1-8B)",
     )
-    parser.add_argument("--adapter", type=str, default="./doctune-dpo")
-    parser.add_argument("--output", type=str, default="./doctune-merged")
+    parser.add_argument(
+        "--adapter", type=str, default="./doctune-dpo",
+        help="Path to the DPO LoRA adapter directory to merge "
+             "(default: ./doctune-dpo, the best run from train_dpo.py)",
+    )
+    parser.add_argument(
+        "--output", type=str, default="./doctune-merged",
+        help="Output directory for the merged standalone model (default: ./doctune-merged)",
+    )
     return parser.parse_args()
 
 
@@ -58,8 +65,12 @@ def main() -> None:
 
     # 4. Save standalone model + tokenizer
     logger.info("Saving merged model to '%s'...", args.output)
-    merged_model.save_pretrained(args.output)
-    tokenizer.save_pretrained(args.output)
+    try:
+        merged_model.save_pretrained(args.output)
+        tokenizer.save_pretrained(args.output)
+    except OSError as exc:
+        logger.error("Failed to save merged model to %s: %s", args.output, exc)
+        raise
 
     logger.info("Merge complete. Model is ready for production inference.")
 
