@@ -32,6 +32,11 @@ def run_extraction(args: argparse.Namespace) -> None:
         args: Parsed command-line arguments.
     """
     print("--- INITIALIZING EXTRACTION PIPELINE ---")
+
+    if not os.path.isdir(args.input_dir):
+        print(f"CRITICAL: Input directory '{args.input_dir}' does not exist.")
+        return
+
     extractor, cache = init_extractor_and_cache(args)
 
     pdf_files = discover_pdfs(args.input_dir)
@@ -73,7 +78,5 @@ if __name__ == "__main__":
     add_common_cli_args(parser)
     add_extraction_cli_args(parser)
     cli_args = parser.parse_args()
-
-    os.makedirs(cli_args.input_dir, exist_ok=True)
 
     run_extraction(cli_args)

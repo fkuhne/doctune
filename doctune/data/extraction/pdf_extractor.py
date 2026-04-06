@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 # HybridChunker enforces this ceiling; see __init__ for rationale.
 _MAX_CHUNK_TOKENS: int = 350
 
+# Minimum character length for a chunk to be kept.
+# Filters page numbers, isolated captions, and lone headings (~20 tokens).
+_MIN_CHUNK_CHARS: int = 100
+
+# Tokenizer used by HybridChunker for token counting only (not for embeddings).
+_CHUNKER_TOKENIZER: str = "BAAI/bge-small-en-v1.5"
+
 
 class DoclingManualExtractor: # pylint: disable=too-few-public-methods
     """Extracts and chunks PDF documents using IBM Docling.
@@ -47,18 +54,6 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
             logger.warning("Invalid %s=%r. Using default %s.", var_name, raw, default)
             return default
 
-    @staticmethod
-    def _log_error(msg: str, *fmt_args: Any) -> None:
-        """Log an error and echo it to stdout."""
-        logger.error(msg, *fmt_args)
-        print(f"ERROR: {msg % fmt_args}")
-
-    @staticmethod
-    def _log_warning(msg: str, *fmt_args: Any) -> None:
-        """Log a warning and echo it to stdout."""
-        logger.warning(msg, *fmt_args)
-        print(f"  [WARN] {msg % fmt_args}")
-
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
@@ -85,7 +80,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         self.converter = self._build_converter()
         self._suppress_rapidocr_logs()
         self.chunker = HybridChunker(
-            tokenizer="BAAI/bge-small-en-v1.5",  # lightweight; used only for token counting
+            tokenizer=_CHUNKER_TOKENIZER,
             max_tokens=_MAX_CHUNK_TOKENS,
             merge_peers=True,  # merges tiny sibling chunks up to the limit
         )
@@ -303,7 +298,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
 
             if attempt < self.retry_attempts:
                 # Converter reset is costly and spammy; reserve it for hard failures.
-                if last_error_label and not last_error_label.startswith("status=PARTIAL_SUCCESS"):
+                if last_error_label:
                     self._reset_converter(
                         f"retrying pages {start_page}-{end_page} after {last_error_label}"
                     )
@@ -312,7 +307,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                     time.sleep(sleep_for)
 
         if start_page == end_page:
-            self._log_warning(
+            logger.warning(
                 "Skipping page %d in %s after %d attempts (%s)",
                 start_page,
                 pdf_path,
@@ -362,7 +357,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
         """
         # Validate file existence before calling Docling
         if not os.path.exists(pdf_path):
-            self._log_error("PDF not found: %s", pdf_path)
+            logger.error("PDF not found: %s", pdf_path)
             return []
 
         if not pdf_path.lower().endswith(".pdf"):
@@ -381,10 +376,10 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                     self.converter.convert(pdf_path, raises_on_error=False)
                 ]
             except PermissionError:
-                self._log_error("Permission denied reading PDF: %s", pdf_path)
+                logger.error("Permission denied reading PDF: %s", pdf_path)
                 return []
             except Exception as e: # pylint: disable=broad-exception-caught
-                self._log_error(
+                logger.error(
                     "PDF parsing failed for %s: %s: %s",
                     pdf_path, type(e).__name__, e,
                 )
@@ -405,13 +400,13 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                         end_page,
                     )
                 except PermissionError:
-                    self._log_error("Permission denied reading PDF: %s", pdf_path)
+                    logger.error("Permission denied reading PDF: %s", pdf_path)
                     return []
 
                 conversion_results.extend(range_results)
 
             if not conversion_results:
-                self._log_error("No pages could be converted for %s", pdf_path)
+                logger.error("No pages could be converted for %s", pdf_path)
                 return []
 
         # 2. Semantic Chunking + 3. Metadata Injection & Filtering
@@ -428,7 +423,7 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
 
                 # Floor: ~20 tokens. Filters page numbers, isolated captions, lone headings.
                 # Ceiling is enforced upstream by HybridChunker at _MAX_CHUNK_TOKENS.
-                if len(raw_text.strip()) < 100:
+                if len(raw_text.strip()) < _MIN_CHUNK_CHARS:
                     continue
 
                 breadcrumb = self._build_section_breadcrumb(chunk)
@@ -440,22 +435,6 @@ class DoclingManualExtractor: # pylint: disable=too-few-public-methods
                     f"{raw_text}\n"
                 )
                 final_dataset_chunks.append(enriched_chunk)
-
-        # --- TEMPORARY DIAGNOSTIC — remove after validation ---
-        try:
-            from transformers import AutoTokenizer as _Tok
-            _tok = _Tok.from_pretrained("BAAI/bge-small-en-v1.5")
-            token_counts = [len(_tok.encode(c)) for c in final_dataset_chunks]
-            if token_counts:
-                print(f"\n--- Chunk token distribution ---")
-                print(f"  Count : {len(token_counts)}")
-                print(f"  Min   : {min(token_counts)}")
-                print(f"  Max   : {max(token_counts)}")
-                print(f"  Mean  : {sum(token_counts) / len(token_counts):.0f}")
-                print(f"  >350  : {sum(1 for t in token_counts if t > _MAX_CHUNK_TOKENS)} chunks above ceiling")
-        except Exception:
-            pass
-        # --- END DIAGNOSTIC ---
 
         print(f"Extraction complete. Yielded {len(final_dataset_chunks)} high-fidelity chunks.")
         return final_dataset_chunks
