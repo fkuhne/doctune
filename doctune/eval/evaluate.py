@@ -33,6 +33,8 @@ from doctune.utils.model_utils import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_JUDGE_MODEL: str = "gpt-4o"
+
 # ──────────────────────────────────────────────
 # Test Prompts
 # ──────────────────────────────────────────────
@@ -76,13 +78,19 @@ JUDGE_SYSTEM_PROMPT = (
 )
 
 
-def judge_response(prompt: str, response: str, test_type: str) -> dict | None:
-    """Use GPT-4o to score a model response.
+def judge_response(
+    prompt: str,
+    response: str,
+    test_type: str,
+    judge_model: str = _DEFAULT_JUDGE_MODEL,
+) -> dict | None:
+    """Use an LLM to score a model response.
 
     Args:
         prompt: The original user question.
         response: The model's generated answer.
         test_type: ``"IN-DOMAIN"`` or ``"OUT-OF-DOMAIN"``.
+        judge_model: Model identifier for the LLM judge (default: ``_DEFAULT_JUDGE_MODEL``).
 
     Returns:
         Parsed JSON dict with ``"scores"`` and ``"explanation"`` keys,
@@ -102,7 +110,7 @@ def judge_response(prompt: str, response: str, test_type: str) -> dict | None:
         )
 
         result = client.responses.create(
-            model="gpt-4o",
+            model=judge_model,
             instructions=JUDGE_SYSTEM_PROMPT,
             input=user_msg,
             max_output_tokens=200,
@@ -147,6 +155,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-new-tokens", type=int, default=150)
     parser.add_argument("--temperature", type=float, default=0.1)
+    parser.add_argument(
+        "--judge-model", default=_DEFAULT_JUDGE_MODEL,
+        help=f"LLM judge model ID (default: {_DEFAULT_JUDGE_MODEL})",
+    )
+    parser.add_argument(
+        "--output", default="eval_results.json",
+        help="Path for the output JSON results file (default: eval_results.json)",
+    )
     return parser.parse_args()
 
 
@@ -263,7 +279,7 @@ def run_eval(
 
         entry: dict = {"prompt": prompt, "response": ans}
         if args.judge:
-            verdict = judge_response(prompt, ans, "IN-DOMAIN")
+            verdict = judge_response(prompt, ans, "IN-DOMAIN", args.judge_model)
             entry["judge"] = verdict
             if verdict:
                 _log_judge_scores(verdict.get("scores", {}), "IN-DOMAIN", verdict.get("explanation", ""))
@@ -286,7 +302,7 @@ def run_eval(
         entry = {"prompt": prompt, "response": ans, "keyword_refused": keyword_refused}
 
         if args.judge:
-            verdict = judge_response(prompt, ans, "OUT-OF-DOMAIN")
+            verdict = judge_response(prompt, ans, "OUT-OF-DOMAIN", args.judge_model)
             entry["judge"] = verdict
             if verdict:
                 scores = verdict.get("scores", {})
@@ -338,9 +354,13 @@ def main() -> None:
     clear_gpu_cache()
 
     # 4. Save results as JSON
-    output_path = "eval_results.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(all_results, f, indent=2)
+    output_path = args.output
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(all_results, f, indent=2)
+    except OSError as exc:
+        logger.error("Failed to write eval results to %s: %s", output_path, exc)
+        raise
     logger.info("Detailed results saved to %s", output_path)
 
 

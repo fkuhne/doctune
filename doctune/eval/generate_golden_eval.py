@@ -23,7 +23,14 @@ import os
 import sys
 import time
 
-from doctune.utils.provider_utils import build_client, detect_provider, retry_on_rate_limit
+from doctune.utils.pricing import estimate_batch_cost
+from doctune.utils.provider_utils import (
+    build_client,
+    check_provider_separation,
+    detect_provider,
+    get_alternative_models,
+    retry_on_rate_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +60,11 @@ def _check_family_separation(eval_model: str, train_model: str) -> None:
         SystemExit: If both models resolve to the same provider family,
             unless the user explicitly overrides with ``--allow-same-family``.
     """
-    eval_provider  = detect_provider(eval_model)
-    train_provider = detect_provider(train_model)
+    is_separated, eval_provider, train_provider = check_provider_separation(
+        eval_model, train_model,
+    )
 
-    if eval_provider == train_provider:
+    if not is_separated:
         print(
             f"\n  [CONTAMINATION WARNING]\n"
             f"  Eval model  : {eval_model!r}  (provider: {eval_provider})\n"
@@ -68,7 +76,8 @@ def _check_family_separation(eval_model: str, train_model: str) -> None:
             f"\n"
             f"  Recommended eval models when training provider is '{train_provider}':\n"
         )
-        _print_alternative_suggestions(train_provider)
+        for alt in get_alternative_models(train_provider):
+            print(f"    {alt}")
         print(
             f"\n  To override this check (not recommended), pass:\n"
             f"    --allow-same-family\n"
@@ -79,20 +88,6 @@ def _check_family_separation(eval_model: str, train_model: str) -> None:
         f"  [OK] Family separation confirmed: "
         f"eval={eval_provider!r}, train={train_provider!r}"
     )
-
-
-_FAMILY_ALTERNATIVES: dict[str, list[str]] = {
-    "openai":    ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-    "anthropic": ["gpt-5.4", "gpt-5.4-mini"],
-    "ollama":    ["claude-3-5-haiku-20241022", "gpt-5.4-mini"],
-}
-
-
-def _print_alternative_suggestions(train_provider: str) -> None:
-    """Print suggested eval models for a given training provider."""
-    alternatives = _FAMILY_ALTERNATIVES.get(train_provider, [])
-    for alt in alternatives:
-        print(f"    {alt}")
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +153,7 @@ _CHECKPOINT_SUFFIX = ".checkpoint.jsonl"
 
 
 def _checkpoint_path(output_path: str) -> str:
+    """Return the checkpoint file path for the given output path."""
     return output_path + _CHECKPOINT_SUFFIX
 
 
@@ -199,35 +195,10 @@ def _clear_checkpoint(output_path: str) -> None:
 # Pre-flight cost estimation
 # ---------------------------------------------------------------------------
 
-# Approximate cost per 1 000 tokens (input/output) by model family.
-# Update these when provider pricing changes.
-_COST_PER_1K: dict[str, tuple[float, float]] = {
-    "gpt-4o":                      (0.0025, 0.010),
-    "gpt-4o-mini":                 (0.00015, 0.0006),
-    "claude-3-5-sonnet-20241022":  (0.003,  0.015),
-    "claude-3-5-haiku-20241022":   (0.0008, 0.004),
-    "gpt-5.4":                     (0.0025, 0.015),
-    "gpt-5.4-mini":                (0.0004, 0.0016),
-    # gpt-5.4-nano: pricing TBD — omitted until OpenAI publishes rates
-    "default":                     (0.003,  0.015),
-}
-
-# Rough token estimates per scenario
-_INPUT_TOKENS_PER_SCENARIO  = 180   # system prompt + user prompt amortised
-_OUTPUT_TOKENS_PER_SCENARIO = 320   # chosen + rejected + prompt
-
-
-def _estimate_cost(model: str, total_scenarios: int) -> float:
-    """Return an estimated USD cost for generating *total_scenarios*."""
-    input_rate, output_rate = _COST_PER_1K.get(model, _COST_PER_1K["default"])
-    input_cost  = (total_scenarios * _INPUT_TOKENS_PER_SCENARIO  / 1000) * input_rate
-    output_cost = (total_scenarios * _OUTPUT_TOKENS_PER_SCENARIO / 1000) * output_rate
-    return input_cost + output_cost
-
 
 def _preflight_check(model: str, total: int, yes: bool) -> None:
     """Print cost estimate and prompt for confirmation unless *yes* is True."""
-    estimate = _estimate_cost(model, total)
+    estimate = estimate_batch_cost(model, total)
     print(f"\n  Model   : {model}")
     print(f"  Scenarios: {total}")
     print(f"  Est. cost: ${estimate:.3f} USD  (rough estimate only)\n")
@@ -405,6 +376,10 @@ def main() -> None:
     )
     parser.add_argument("--output", default="golden_eval.jsonl", help="Output file path")
     parser.add_argument(
+        "--domain", default=None,
+        help="Subject-matter domain string (falls back to $DOMAIN env var, then 'technical documentation')",
+    )
+    parser.add_argument(
         "--yes", action="store_true",
         help="Skip cost confirmation prompt",
     )
@@ -420,19 +395,23 @@ def main() -> None:
     # Contamination guard — enforce family separation
     if args.train_model and not args.allow_same_family:
         _check_family_separation(args.model, args.train_model)
-    elif not args.train_model:
+    elif args.train_model and args.allow_same_family:
+        print(
+            "  [WARN] --allow-same-family passed. "
+            "Eval results may not accurately reflect out-of-distribution performance."
+        )
+    elif args.allow_same_family:
+        print(
+            "  [INFO] --allow-same-family has no effect without --train-model."
+        )
+    else:
         print(
             "  [INFO] --train-model not specified. "
             "Family separation cannot be verified. "
             "Pass --train-model <model-id> to enforce it."
         )
-    if args.allow_same_family:
-        print(
-            "  [WARN] --allow-same-family passed. "
-            "Eval results may not accurately reflect out-of-distribution performance."
-        )
 
-    domain = os.environ.get("DOMAIN", "technical documentation")
+    domain = args.domain or os.environ.get("DOMAIN", "technical documentation")
 
     # Pre-flight cost estimate
     _preflight_check(args.model, args.count, args.yes)
