@@ -10,7 +10,7 @@
 # setup/runpod_setup.sh on a provisioned GPU pod instead.
 # ==============================================================================
 
-set -e  # Exit immediately if a command exits with a non-zero status
+set -euo pipefail  # Exit on error, unbound variables, and pipe failures
 
 echo "--- Local Environment Setup (Phase 2: Data Curation) ---"
 
@@ -49,8 +49,8 @@ echo ""
 echo "  2. Place your PDF files in the ./manuals/ directory"
 echo ""
 echo "  3. Run the data generation pipeline:"
-echo "     python -m doctune.data.build_dataset"
-echo "     # or: python -m doctune.data.build_dataset --model claude-3-5-sonnet-20241022"
+echo "     python -m doctune.data.pipeline.build_dataset"
+echo "     # or: python -m doctune.data.pipeline.build_dataset --model claude-3-5-sonnet-20241022"
 echo ""
 echo "  4. (Optional) Generate the golden evaluation set:"
 echo "     python -m doctune.eval.generate_golden_eval"
